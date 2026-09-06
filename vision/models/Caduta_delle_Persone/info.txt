@@ -1,0 +1,36 @@
+Caduta_delle_persone
+
+Riconosce le persone e le cadute: due classi, Person e Fall. Durante le soste
+di supervisione la prima serve ad accorgersi di chi entra in un'area
+interdetta, la seconda all'allarme di caduta. I pesi che il sistema di volo
+carica sono weights/best.pt.
+
+Addestrato con Ultralytics 8.4.30 (Python 3.12.5, torch 2.11.0+cu130) su una
+GeForce RTX 4050 Laptop, partendo da yolo26s.pt e dal dataset ver_DcEFJ1N. Ha
+eseguito tutte le 80 epoche previste, senza che l'arresto anticipato
+(patience=20) scattasse, e best.pt conserva i pesi dell'epoca 80. Modello
+risultante: 122 livelli, 9.465.954 parametri, 20,5 GFLOPs.
+
+    model = YOLO('yolo26s.pt')
+    model.train(
+        data='vision/training/trainer/datasets/ver_DcEFJ1N/data.yaml',
+        name='Caduta_delle_persone',
+        project='vision/models',
+        epochs=80,
+        patience=20,
+        imgsz=640,
+        batch=16,
+        device=0,
+        plots=False,
+        close_mosaic=0,
+    )
+
+Validazione di best.pt:
+
+    classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte        1036      3356        0,882      0,835   0,897      0,592
+    Fall          780       899        0,893      0,852   0,913      0,633
+    Person        711      2457        0,871      0,818   0,881      0,551
+
+Per immagine: 0,2 ms di preparazione, 4,6 ms di inferenza, 0,2 ms di
+post-elaborazione.

@@ -1,0 +1,36 @@
+Protezioni_collettive
+
+Riconosce le reti di sicurezza, cioè le protezioni collettive del cantiere.
+Una sola classe, Safety_Net. Su questo modello si regge il controllo della
+presenza della rete durante le soste di supervisione. I pesi che il sistema di
+volo carica sono weights/best.pt.
+
+Addestrato con Ultralytics 8.4.30 (Python 3.12.5, torch 2.11.0+cu130) su una
+GeForce RTX 4050 Laptop, partendo da yolo26s.pt e dal dataset
+verWhiteNetsFull_Lab_Patch_Again. Delle 50 epoche previste ne ha eseguite 29:
+nelle ultime 20 i risultati di validazione non sono migliorati, così è
+scattato l'arresto anticipato (patience=20) e best.pt conserva i pesi
+dell'epoca 9. Modello risultante: 122 livelli, 9.465.567 parametri, 20,5
+GFLOPs.
+
+    model = YOLO('yolo26s.pt')
+    model.train(
+        data='vision/training/trainer/datasets/verWhiteNetsFull_Lab_Patch_Again/data.yaml',
+        name='Protezioni_collettive',
+        project='vision/models',
+        epochs=50,
+        patience=20,
+        imgsz=640,
+        batch=16,
+        device=0,
+        plots=False,
+        close_mosaic=0,
+    )
+
+Validazione di best.pt:
+
+    classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte           7         6        1,000      0,991   0,995      0,845
+
+Per immagine: 0,8 ms di preparazione, 20,8 ms di inferenza, 0,2 ms di
+post-elaborazione.

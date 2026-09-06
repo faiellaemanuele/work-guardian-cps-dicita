@@ -1,0 +1,36 @@
+Aree_interdette
+
+Riconosce i rettangoli rossi che delimitano a pavimento le aree da non
+superare. Una sola classe, Red Rectangle. Insieme alle persone riconosciute da
+Caduta_delle_persone alimenta l'allarme di superamento, uno dei controlli delle
+soste di supervisione. I pesi che il sistema di volo carica sono
+weights/best.pt.
+
+Addestrato con Ultralytics 8.4.30 (Python 3.12.5, torch 2.11.0+cu130) su una
+GeForce RTX 4050 Laptop, partendo da yolo26s.pt e dal dataset verRedRect_Lab.
+Delle 30 epoche previste ne ha eseguite 18: nelle ultime 10 i risultati di
+validazione non sono migliorati, così è scattato l'arresto anticipato
+(patience=10) e best.pt conserva i pesi dell'epoca 8. Modello risultante: 122
+livelli, 9.465.567 parametri, 20,5 GFLOPs.
+
+    model = YOLO('yolo26s.pt')
+    model.train(
+        data='vision/training/trainer/datasets/verRedRect_Lab/data.yaml',
+        name='Aree_interdette',
+        project='vision/models',
+        epochs=30,
+        patience=10,
+        imgsz=640,
+        batch=16,
+        device=0,
+        plots=False,
+        close_mosaic=0,
+    )
+
+Validazione di best.pt:
+
+    classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte           5         5        0,978      1,000   0,995      0,947
+
+Per immagine: 0,3 ms di preparazione, 8,2 ms di inferenza, 0,2 ms di
+post-elaborazione.

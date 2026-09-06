@@ -1,0 +1,52 @@
+Protezioni_individuali
+
+Riconosce i dispositivi di protezione individuale e, soprattutto, la loro
+assenza: alle quattro classi Helmet, Vest, Goggles e Safety_shoes se ne
+affiancano altrettante con il prefisso Without_, ed è su queste che si regge
+l'allerta DPI delle soste di supervisione. I pesi che il sistema di volo carica
+sono weights/best.pt.
+
+Addestrato con Ultralytics 8.4.30 (Python 3.12.5, torch 2.11.0+cu130) su una
+GeForce RTX 4050 Laptop, partendo da yolo26s.pt e dal dataset
+verPPE_original_clean. Ha eseguito tutte le 300 epoche previste, senza che
+l'arresto anticipato (patience=50) scattasse, e best.pt conserva i pesi
+dell'epoca 297. Modello risultante: 122 livelli, 9.468.276 parametri, 20,5
+GFLOPs.
+
+    model = YOLO('yolo26s.pt')
+    model.train(
+        data='vision/training/trainer/datasets/verPPE_original_clean/data.yaml',
+        name='Protezioni_individuali',
+        project='vision/models',
+        epochs=300,
+        patience=50,
+        imgsz=640,
+        batch=16,
+        device=0,
+        plots=False,
+        close_mosaic=0,
+    )
+
+La sessione è stata interrotta e ripresa dal checkpoint:
+
+    model = YOLO('vision/models/Protezioni_individuali/weights/last.pt')
+    model.train(resume=True)
+
+Le 300 epoche sono il totale dell'addestramento, non della sola ripresa:
+results.csv le riporta tutte, dalla 1 alla 300.
+
+Validazione di best.pt:
+
+    classe                 immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte                      1160      4722        0,938      0,901   0,953      0,722
+    Helmet                      598      1182        0,975      0,955   0,986      0,770
+    Vest                        358       676        0,978      0,929   0,973      0,786
+    Goggles                     298       363        0,945      0,904   0,954      0,698
+    Safety_shoes                333       713        0,872      0,840   0,896      0,611
+    Without_Helmet              279       429        0,925      0,892   0,958      0,697
+    Without_Vest                356       574        0,942      0,939   0,974      0,770
+    Without_Goggles             284       394        0,958      0,864   0,940      0,673
+    Without_Safety_shoes        184       391        0,911      0,887   0,946      0,768
+
+Per immagine: 0,2 ms di preparazione, 5,2 ms di inferenza, 0,2 ms di
+post-elaborazione.
