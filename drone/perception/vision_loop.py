@@ -175,16 +175,40 @@ class VisionLoop:
                 tag_ids.add(int(tag_id))
         return tag_ids
 
-    def get_detected_model_names(self) -> set[str]:
+    def get_detection_summary(self) -> list[dict]:
         with self._detection_lock:
             snapshot = self._cached_detections
-        names: set[str] = set()
+        summary: list[dict] = []
         for entry in snapshot or []:
-            if entry.get("detections"):
-                name = entry.get("name")
-                if name is not None:
-                    names.add(name)
-        return names
+            model_name = entry.get("name")
+            for det in entry.get("detections") or []:
+                # Estrai le variabili
+                current_label = det.get("label")
+                current_confidence = det.get("confidence")
+                
+                # --- INIZIO NUOVO CODICE MQTT ---
+                import paho.mqtt.publish as publish
+                import json
+                
+                # Importa la configurazione (assicurati che APP_CONFIG abbia l'attributo mqtt_broker_ip)
+                from drone.config import APP_CONFIG
+                
+                payload = json.dumps({
+                    "tipo_allarme": current_label, 
+                    "confidenza": current_confidence
+                })
+                # Pubblica l'anomalia sul topic (assicurati che il broker sia attivo e configurato)
+                publish.single("cantiere/allarmi", payload, hostname=APP_CONFIG.mqtt_broker_ip)
+                # --- FINE NUOVO CODICE MQTT ---
+                
+                summary.append(
+                    {
+                        "model": model_name,
+                        "label": current_label,
+                        "confidence": current_confidence,
+                    }
+                )
+        return summary
 
     def get_detection_summary(self) -> list[dict]:
         with self._detection_lock:

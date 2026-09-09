@@ -264,6 +264,9 @@ class AppConfig:
     apriltag_autopilot: AprilTagAutopilotConfig = field(default_factory=AprilTagAutopilotConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
+    # Configurazione MQTT
+    mqtt_broker_ip: str = "192.168.1.50"
+    
     def __post_init__(self):
         if self.battery_warning_pct <= self.battery_critical_pct:
             raise ValueError(
