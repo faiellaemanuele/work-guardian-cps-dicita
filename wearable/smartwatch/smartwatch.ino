@@ -52,7 +52,7 @@ PulseOximeter pox;
 // ---------- Rete e canale MQTT ----------
 const char* WIFI_SSID   = "NOME_WIFI";
 const char* WIFI_PASS   = "PASSWORD_WIFI";
-const char* MQTT_BROKER = "192.168.1.10";
+const char* MQTT_BROKER = "10.25.118.209";
 const int   MQTT_PORT   = 1883;
 const char* OPERAIO_ID  = "operaio_1";
 
