@@ -35,11 +35,21 @@ class PilotCommands:
 
         self._autonomy_enabled = False
 
+        self._scenario_requested = False
+
+        self._landed_by_pilot = False
+
     def is_detection_enabled(self) -> bool:
         return self._detection_enabled
 
     def is_autonomy_enabled(self) -> bool:
         return self._autonomy_enabled
+
+    def is_scenario_change_requested(self) -> bool:
+        return self._scenario_requested
+
+    def landed_by_pilot(self) -> bool:
+        return self._landed_by_pilot
 
     def disable_autonomy(self):
         self._autonomy_enabled = False
@@ -54,6 +64,7 @@ class PilotCommands:
         if actions["takeoff"]:
             try:
                 if self.controller.takeoff():
+                    self._landed_by_pilot = False
                     print_event("Decollo eseguito")
                 else:
                     print_event("Decollo non riuscito: controlla il drone", prefix="AVVISO")
@@ -64,6 +75,7 @@ class PilotCommands:
             self.disable_autonomy()
             try:
                 if self.controller.land():
+                    self._landed_by_pilot = True
                     print_event("Atterraggio eseguito")
                 else:
                     print_event("Atterraggio ignorato: il drone è a terra", prefix="AVVISO")
@@ -100,6 +112,16 @@ class PilotCommands:
                         self.controller.send_rc_control(0, 0, 0, 0)
                     except Exception:
                         LOGGER.warning("Impossibile azzerare i comandi RC dopo il cambio di stato dell'autonomia.", exc_info=True)
+
+        if actions["scenario"]:
+            if self.controller.is_flying:
+                print_event(
+                    "Atterra prima di cambiare scenario", prefix="AVVISO",
+                )
+            else:
+                self._scenario_requested = True
+                print_event("Ritorno alla scelta dello scenario")
+                return False
 
         if actions["quit"]:
             try:

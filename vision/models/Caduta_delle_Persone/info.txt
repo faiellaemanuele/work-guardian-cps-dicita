@@ -1,4 +1,4 @@
-Caduta_delle_persone
+Caduta_delle_Persone
 
 Riconosce le persone e le cadute: due classi, Person e Fall. Durante le soste
 di supervisione la prima serve ad accorgersi di chi entra in un'area
@@ -14,7 +14,7 @@ risultante: 122 livelli, 9.465.954 parametri, 20,5 GFLOPs.
     model = YOLO('yolo26s.pt')
     model.train(
         data='vision/training/trainer/datasets/ver_DcEFJ1N/data.yaml',
-        name='Caduta_delle_persone',
+        name='Caduta_delle_Persone',
         project='vision/models',
         epochs=80,
         patience=20,

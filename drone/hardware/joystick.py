@@ -157,6 +157,8 @@ def _apply_button_event(event, actions, mapping):
         actions["detect"] = True
     elif event.button == mapping.button_autonomy:
         actions["autonomy"] = True
+    elif event.button == mapping.button_scenario:
+        actions["scenario"] = True
     elif event.button == mapping.button_quit:
         actions["quit"] = True
 
@@ -206,6 +208,7 @@ def read_events():
         "land": False,
         "detect": False,
         "autonomy": False,
+        "scenario": False,
     }
 
     active_instance_id, active_legacy_id = _active_joystick_ids()
@@ -306,9 +309,29 @@ def get_command(speed_pct=50):
     }
 
 
-def format_joystick_help() -> str:
+def joystick_actions() -> tuple[tuple[str, str], ...]:
     mapping = APP_CONFIG.joystick
+    return (
+        (mapping.label_takeoff, "decolla"),
+        (mapping.label_land, "atterra"),
+        (mapping.label_detection, "accende e spegne il riconoscimento"),
+        (mapping.label_autonomy, "accende e spegne il volo autonomo"),
+        (mapping.label_scenario, "a terra, torna alla scelta dello scenario"),
+        (mapping.label_quit, "chiude la sessione"),
+    )
 
+
+def joystick_axis_actions() -> tuple[tuple[str, str], ...]:
+    mapping = APP_CONFIG.joystick
+    return (
+        (mapping.label_axis_lr, "trasla a sinistra e a destra"),
+        (mapping.label_axis_fb, "avanza e indietreggia"),
+        (mapping.label_axis_ud, "sale e scende"),
+        (mapping.label_axis_yaw, "ruota su sé stesso"),
+    )
+
+
+def format_joystick_help() -> str:
     w = 26
     sep = "─" * 58
     righe = [
@@ -317,18 +340,13 @@ def format_joystick_help() -> str:
         sep,
         f"{'Pulsante':<{w}}  Azione",
         sep,
-        f"{mapping.label_takeoff:<{w}}  decolla",
-        f"{mapping.label_land:<{w}}  atterra",
-        f"{mapping.label_detection:<{w}}  accende e spegne il riconoscimento",
-        f"{mapping.label_autonomy:<{w}}  accende e spegne il volo autonomo",
-        f"{mapping.label_quit:<{w}}  chiude la sessione e salva i dati",
+    ]
+    righe += [f"{tasto:<{w}}  {azione}" for tasto, azione in joystick_actions()]
+    righe += [
         sep,
         f"{'Asse':<{w}}  Movimento",
         sep,
-        f"{mapping.label_axis_lr:<{w}}  trasla a sinistra e a destra",
-        f"{mapping.label_axis_fb:<{w}}  avanza e indietreggia",
-        f"{mapping.label_axis_ud:<{w}}  sale e scende",
-        f"{mapping.label_axis_yaw:<{w}}  ruota su sé stesso",
-        sep,
     ]
+    righe += [f"{asse:<{w}}  {azione}" for asse, azione in joystick_axis_actions()]
+    righe.append(sep)
     return "\n".join(righe)

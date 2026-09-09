@@ -8,7 +8,8 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from drone.ui import fonts
 from drone.ui.video.mission_map import (
-    LEGEND_COLORS,
+    LEGEND_SCENE,
+    LEGEND_WAYPOINTS,
     draw_mission_map,
 )
 
@@ -64,12 +65,41 @@ _PILL_PAD_X = 11
 _PILL_H = 26
 
 _FONT_MAP = 18
+_FONT_TIMER = 17
+_FONT_PILL = 16
+_FONT_KV_LABEL = 15
+_FONT_KV_VALUE = 17
 
-_LEGEND_FONT = 18
-_LEGEND_DOT = 12
+_DISCLAIMER_FONT = 15
+_DISCLAIMER_LINE_H = 19
+
+_LEGEND_FONT = 15
+_LEGEND_SWATCH = 13
+_LEGEND_SWATCH_GAP = 10
 _LEGEND_ROW_H = 27
 _LEGEND_PAD_X = _PANEL_TEXT_PAD
 _LEGEND_PAD_Y = 12
+_LEGEND_COL_GAP = 20
+
+TOLERANCE_PILL_OK = "waypoint raggiunto"
+TOLERANCE_PILL_BAD = "correzione in corso"
+TOLERANCE_PILL_UNKNOWN = "--"
+
+TOLERANCE_ERROR_LABELS = {
+    "XY": "errore di posizione",
+    "Z": "errore di quota",
+    "Yaw": "errore di orientamento",
+}
+TOLERANCE_ERROR_LABEL_DEFAULT = "errore"
+TOLERANCE_THRESHOLD_LABEL = "soglia di tolleranza *"
+
+SUPERVISION_LABEL = "Timer di supervisione"
+MISSION_FINISHED_LABEL = "Missione completata"
+
+MAP_DISCLAIMER = (
+    "* soglia di tolleranza: soglia in m/\u00b0 al di sotto della quale "
+    "il waypoint \u00e8 considerato raggiunto"
+)
 
 _NO_MISSION_NOTE = "Nessun percorso caricato: non c'è una rotta da mostrare, il volo prosegue in manuale."
 
@@ -166,7 +196,15 @@ def _layout_log_line(line: str, max_chars: int) -> list[tuple[str, bool]]:
     line = str(line)
     if len(line) <= max_chars:
         return [(line, False)]
-    return [(line[: max(1, max_chars - 1)] + "…", False)]
+    width = max_chars - _MESSAGE_COLUMN
+    if width < 8:
+        return [
+            (piece, index > 0)
+            for index, piece in enumerate(_wrap_text(line, max_chars))
+        ]
+    head, message = line[:_MESSAGE_COLUMN], line[_MESSAGE_COLUMN:]
+    pieces = _wrap_text(message, width)
+    return [(head + pieces[0], False)] + [(piece, True) for piece in pieces[1:]]
 
 
 def _draw_lines(draw, lines, top: int, panel_h: int, panel_w: int,
@@ -231,7 +269,7 @@ def _draw_note(img, draw, text: str, x: Optional[int] = None) -> None:
     x0 = _PAD if x is None else int(x)
     font = fonts.mono(_FONT_SIZE)
     char_w = _mono_char_width(font)
-    max_chars = max(1, int((img.width - _PAD - x0) / char_w)) if char_w > 0 else 60
+    max_chars = max(1, int((img.width - _PAD - x0) / char_w)) if char_w > 0 else len(text)
     y = _HEADER_H + _PAD + 6
     for piece in _wrap_text(text, max_chars):
         draw.text((x0, y), piece, font=font, fill=_MUTED)
@@ -291,11 +329,11 @@ def _draw_float_box(img, draw, box) -> None:
 
 def _draw_pill(draw, x_right: int, y_center: int, ok, font) -> None:
     if ok is None:
-        text, fg, bg = "--", _MUTED, None
+        text, fg, bg = TOLERANCE_PILL_UNKNOWN, _MUTED, None
     elif ok:
-        text, fg, bg = "in tolleranza", _POS, _PILL_OK_BG
+        text, fg, bg = TOLERANCE_PILL_OK, _POS, _PILL_OK_BG
     else:
-        text, fg, bg = "fuori tolleranza", _NEG, _PILL_BAD_BG
+        text, fg, bg = TOLERANCE_PILL_BAD, _NEG, _PILL_BAD_BG
     text_w = int(draw.textlength(text, font=font))
     x0 = x_right - text_w - 2 * _PILL_PAD_X
     if bg is not None:
@@ -309,18 +347,18 @@ def _draw_pill(draw, x_right: int, y_center: int, ok, font) -> None:
 def _draw_kv_line(draw, x0: int, x1: int, y_center: int, label: str, value: str, color) -> None:
     draw.text(
         (x0, y_center), label,
-        font=fonts.mono(_FONT_MAP), fill=_MUTED, anchor="lm",
+        font=fonts.mono(_FONT_KV_LABEL), fill=_MUTED, anchor="lm",
     )
     draw.text(
         (x1, y_center), value,
-        font=fonts.mono(_FONT_MAP), fill=color, anchor="rm",
+        font=fonts.mono(_FONT_KV_VALUE), fill=color, anchor="rm",
     )
 
 
 def _draw_tolerance_card(img, draw, x0: int, y0: int, width: int, axes) -> None:
     _draw_float_box(img, draw, (x0, y0, x0 + width, y0 + _tolerance_card_h()))
     font_axis = fonts.mono(_FONT_MAP)
-    font_pill = fonts.mono(_FONT_MAP)
+    font_pill = fonts.mono(_FONT_PILL)
     inner_x0 = x0 + _CARD_PAD_X
     inner_x1 = x0 + width - _CARD_PAD_X
 
@@ -338,35 +376,36 @@ def _draw_tolerance_card(img, draw, x0: int, y0: int, width: int, axes) -> None:
         line_y = name_y + _AXIS_NAME_H + _AXIS_NAME_GAP + _AXIS_LINE_H // 2
         _draw_kv_line(
             draw, inner_x0, inner_x1, line_y,
-            "errore", _format_measure(err, decimals, unit), (255, 255, 255),
+            TOLERANCE_ERROR_LABELS.get(name, TOLERANCE_ERROR_LABEL_DEFAULT),
+            _format_measure(err, decimals, unit), (255, 255, 255),
         )
         _draw_kv_line(
             draw, inner_x0, inner_x1, line_y + _AXIS_LINE_H,
-            "soglia", _format_measure(tol, decimals, unit), (141, 141, 141),
+            TOLERANCE_THRESHOLD_LABEL,
+            _format_measure(tol, decimals, unit), (141, 141, 141),
         )
         y += _axis_block_h()
 
 
 def _draw_timer_box(img, draw, x0: int, y0: int, width: int, mission_map) -> None:
-    badge = mission_map.badge() if mission_map is not None else None
-    if badge is None:
-        return
-
     _draw_float_box(img, draw, (x0, y0, x0 + width, y0 + _TIMER_H))
-    font = fonts.mono(_FONT_MAP)
+    font = fonts.mono(_FONT_TIMER)
     y_center = y0 + _TIMER_H // 2
 
-    if badge.kind == "finished":
+    badge = mission_map.badge() if mission_map is not None else None
+    if badge is not None and badge.kind == "finished":
         draw.text(
-            (x0 + width // 2, y_center), badge.text,
+            (x0 + width // 2, y_center), MISSION_FINISHED_LABEL,
             font=font, fill=_POS, anchor="mm",
         )
         return
 
-    remaining = mission_map.supervision_remaining_sec()
+    remaining = (
+        mission_map.supervision_remaining_sec() if mission_map is not None else None
+    )
     value = "--" if remaining is None else f"{remaining:.1f} s"
     draw.text(
-        (x0 + _CARD_PAD_X, y_center), "Supervisione",
+        (x0 + _CARD_PAD_X, y_center), SUPERVISION_LABEL,
         font=font, fill=_AXIS_NAME, anchor="lm",
     )
     draw.text(
@@ -376,35 +415,81 @@ def _draw_timer_box(img, draw, x0: int, y0: int, width: int, mission_map) -> Non
     )
 
 
-def _map_legend_size(draw) -> tuple[int, int]:
-    font = fonts.mono(_LEGEND_FONT)
-    text_w = max(int(draw.textlength(name, font=font)) for name, _ in LEGEND_COLORS)
-    width = 2 * _LEGEND_PAD_X + _LEGEND_DOT + 10 + text_w
-    height = 2 * _LEGEND_PAD_Y + _LEGEND_ROW_H * len(LEGEND_COLORS)
-    return width, height
+def _map_legend_h() -> int:
+    rows = max(len(LEGEND_WAYPOINTS), len(LEGEND_SCENE))
+    return 2 * _LEGEND_PAD_Y + _LEGEND_ROW_H * rows
 
 
-def _draw_map_legend(img, draw, x0: int, y_bottom: int) -> None:
-    font = fonts.mono(_LEGEND_FONT)
-    width, height = _map_legend_size(draw)
-    y0 = y_bottom - height
-    _draw_float_box(img, draw, (x0, y0, x0 + width, y_bottom))
+def _legend_column_width(entries, font) -> int:
+    text_w = max(font.getlength(name) for name, _kind, _fill, _border in entries)
+    return int(text_w) + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP
 
-    y = y0 + _LEGEND_PAD_Y + _LEGEND_ROW_H // 2
-    for name, color in LEGEND_COLORS:
-        r = _LEGEND_DOT // 2
-        cx = x0 + _LEGEND_PAD_X + r
-        draw.ellipse((cx - r, y - r, cx + r, y + r), fill=color)
+
+def _draw_legend_swatch(draw, cx: int, y: int, kind: str, fill, border) -> None:
+    half = _LEGEND_SWATCH // 2
+    if kind == "dot":
+        draw.ellipse((cx - half, y - half, cx + half, y + half), fill=fill, outline=border)
+        return
+    if kind == "square":
+        draw.rectangle(
+            (cx - half, y - half, cx + half, y + half),
+            fill=fill, outline=border, width=2,
+        )
+        return
+    draw.rectangle(
+        (cx - half - 3, y - half + 1, cx + half + 3, y + half - 1),
+        fill=fill, outline=border, width=2,
+    )
+
+
+def _draw_legend_column(draw, x0: int, y0: int, entries, font) -> None:
+    y = y0 + _LEGEND_ROW_H // 2
+    for name, kind, fill, border in entries:
+        _draw_legend_swatch(draw, x0 + _LEGEND_SWATCH // 2, y, kind, fill, border)
         draw.text(
-            (x0 + _LEGEND_PAD_X + _LEGEND_DOT + 10, y), name,
+            (x0 + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP, y), name,
             font=font, fill=(196, 198, 200), anchor="lm",
         )
         y += _LEGEND_ROW_H
 
 
+def _draw_map_legend(img, draw, x0: int, y0: int, width: int) -> None:
+    font = fonts.mono(_LEGEND_FONT)
+    _draw_float_box(img, draw, (x0, y0, x0 + width, y0 + _map_legend_h()))
+
+    left_x = x0 + _LEGEND_PAD_X
+    right_x = left_x + _legend_column_width(LEGEND_WAYPOINTS, font) + _LEGEND_COL_GAP
+    top = y0 + _LEGEND_PAD_Y
+    _draw_legend_column(draw, left_x, top, LEGEND_WAYPOINTS, font)
+    _draw_legend_column(draw, right_x, top, LEGEND_SCENE, font)
+
+
+def _disclaimer_h(width: int) -> int:
+    font = fonts.mono(_DISCLAIMER_FONT)
+    char_w = _mono_char_width(font)
+    avail = width - 2 * _PANEL_TEXT_PAD
+    max_chars = max(1, int(avail / char_w)) if char_w > 0 else len(MAP_DISCLAIMER)
+    return _DISCLAIMER_LINE_H * len(_wrap_text(MAP_DISCLAIMER, max_chars)) + _PAD
+
+
+def _draw_disclaimer(img, draw) -> None:
+    font = fonts.mono(_DISCLAIMER_FONT)
+    char_w = _mono_char_width(font)
+    avail = img.width - 2 * _PANEL_TEXT_PAD
+    max_chars = max(1, int(avail / char_w)) if char_w > 0 else len(MAP_DISCLAIMER)
+    lines = _wrap_text(MAP_DISCLAIMER, max_chars)
+    y = img.height - _PAD - _DISCLAIMER_LINE_H * len(lines)
+    for piece in lines:
+        draw.text(
+            (_PANEL_TEXT_PAD, y + _DISCLAIMER_LINE_H / 2), piece,
+            font=font, fill=_MUTED, anchor="lm",
+        )
+        y += _DISCLAIMER_LINE_H
+
+
 def map_panel(config, height: int, *, mission_map, scenario_name: Optional[str],
               drone_xy, drone_heading_deg: float, drone_pose_fresh: bool,
-              drone_command, axes) -> np.ndarray:
+              axes) -> np.ndarray:
     img, draw = _new_canvas(
         config, getattr(config, "map_title", "Mappa missione"), height,
         secondary=scenario_name, title_x=_PANEL_TEXT_PAD,
@@ -417,33 +502,29 @@ def map_panel(config, height: int, *, mission_map, scenario_name: Optional[str],
     pad = _MAP_PAD
     top = _HEADER_H + pad
     map_w = max(60, img.width - 2 * pad)
-    map_h = max(60, img.height - top - pad)
+    map_h = max(60, img.height - top - pad - _disclaimer_h(img.width))
     rail_w = max(80, int(getattr(config, "map_info_col_width", 252)))
     reserved_right = rail_w + 2 * _FLOAT_INSET
-    legend_w, _ = _map_legend_size(draw)
-    reserved_left = legend_w + 2 * _FLOAT_INSET
 
     map_img = draw_mission_map(
         mission_map, map_w, map_h,
         drone_xy=drone_xy,
         drone_heading_deg=drone_heading_deg,
         drone_pose_fresh=drone_pose_fresh,
-        drone_command=drone_command,
         reserved_right_px=reserved_right,
-        reserved_left_px=reserved_left,
     )
     img.paste(map_img, (pad, top))
 
     rail_x0 = img.width - pad - _FLOAT_INSET - rail_w
-    rail_h = _tolerance_card_h() + _RAIL_GAP + _TIMER_H
-    rail_y0 = top + max(0, (map_h - rail_h) // 2)
-    _draw_tolerance_card(img, draw, rail_x0, rail_y0, rail_w, axes)
-    _draw_timer_box(
-        img, draw, rail_x0, rail_y0 + _tolerance_card_h() + _RAIL_GAP, rail_w,
-        mission_map,
+    rail_h = (
+        _TIMER_H + _RAIL_GAP + _tolerance_card_h() + _RAIL_GAP + _map_legend_h()
     )
+    y = top + max(0, (map_h - rail_h) // 2)
+    _draw_timer_box(img, draw, rail_x0, y, rail_w, mission_map)
+    y += _TIMER_H + _RAIL_GAP
+    _draw_tolerance_card(img, draw, rail_x0, y, rail_w, axes)
+    y += _tolerance_card_h() + _RAIL_GAP
+    _draw_map_legend(img, draw, rail_x0, y, rail_w)
 
-    _draw_map_legend(
-        img, draw, pad + _FLOAT_INSET, top + map_h - _FLOAT_INSET,
-    )
+    _draw_disclaimer(img, draw)
     return _finalize(img)

@@ -1,4 +1,4 @@
-Protezioni_collettive
+Protezioni_Collettive
 
 Riconosce le reti di sicurezza, cioè le protezioni collettive del cantiere.
 Una sola classe, Safety_Net. Su questo modello si regge il controllo della
@@ -16,7 +16,7 @@ GFLOPs.
     model = YOLO('yolo26s.pt')
     model.train(
         data='vision/training/trainer/datasets/verWhiteNetsFull_Lab_Patch_Again/data.yaml',
-        name='Protezioni_collettive',
+        name='Protezioni_Collettive',
         project='vision/models',
         epochs=50,
         patience=20,

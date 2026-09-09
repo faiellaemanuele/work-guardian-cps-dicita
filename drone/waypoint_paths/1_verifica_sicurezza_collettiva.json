@@ -11,7 +11,7 @@
     {"x": 0,  "y": -1.8, "z": 2, "yaw_deg": -90},
     {"x": 0,  "y": -1.8, "z": 2, "yaw_deg": 90},
     {"x": 0,  "y": 0,    "z": 2, "yaw_deg": 90},
-    {"x": -1.65, "y": 0.9, "z": 2, "yaw_deg": 155}
+    {"x": -1.65, "y": 0.9, "z": 2, "yaw_deg": 145}
   ],
   "supervision_waypoints": [1, 5, 6, 10],
   "supervision_stop_sec": 8,

@@ -14,7 +14,10 @@ from drone.surveillance.person_monitor import PersonMonitor
 from drone.surveillance.safety_net_monitor import SafetyNetMonitor
 from drone.perception.vision_loop import VisionLoop
 from drone.data.flight_data_logger import FlightDataLogger
-from drone.loaders.waypoint_path_loader import load_waypoint_paths
+from drone.loaders.waypoint_path_loader import (
+    load_waypoint_paths,
+    required_model_names,
+)
 from drone.flight.subsystem_builders import (
     create_apriltag_autopilot,
     create_controller,
@@ -40,10 +43,8 @@ from drone.ui.console import (
     set_alert_sink,
 )
 from drone.ui.setup.effects import fade_screen
-from drone.ui.setup.screens import (
-    select_waypoint_path_interactive,
-    select_yolo_models_interactive,
-)
+from drone.ui.setup.screens import select_waypoint_path_interactive
+from drone.ui.setup.welcome import show_welcome_screen
 
 
 @dataclass
@@ -60,7 +61,6 @@ class Subsystems:
     person_monitor: Optional[PersonMonitor] = None
     dpi_monitor: Optional[DpiMonitor] = None
     dashboard: Optional[Dashboard] = None
-    comm_bridge: Any = None
     scenario_name: Optional[str] = None
 
 
@@ -111,27 +111,12 @@ def _phase_manual_control(subsystems: Subsystems):
     return screen
 
 
-def _phase_models(screen):
-    _announce_phase("Fase 2 · Modelli di riconoscimento")
-    pygame.display.set_caption("Tello - Scelta dei modelli")
-    selected_yolo_models = select_yolo_models_interactive(screen)
-    pygame.display.set_caption(APP_CONFIG.window_title)
-    screen = pygame.display.get_surface()
-
-    if selected_yolo_models is None:
-        print_step("--", "Scelta annullata: il programma si chiude")
-        return False, None, screen
-
+def _phase_welcome(screen) -> bool:
+    if not show_welcome_screen(screen):
+        print_step("--", "Uscita dalla schermata iniziale: il programma si chiude")
+        return False
     fade_screen(screen, screen.copy(), fade_in=False)
-    if selected_yolo_models:
-        print_step(
-            "OK",
-            "In volo verranno riconosciute: "
-            f"{', '.join(_model_labels(selected_yolo_models)).lower()}",
-        )
-    else:
-        print_step("--", "Nessun modello scelto: in volo non verrà riconosciuto nulla")
-    return True, selected_yolo_models, screen
+    return True
 
 
 def _report_missing_waypoint_paths() -> None:
@@ -156,14 +141,18 @@ def _report_missing_waypoint_paths() -> None:
 
 
 def _phase_mission_path(screen):
-    _announce_phase("Fase 3 · Percorso della missione")
+    _announce_phase("Fase 4 · Scenario della missione")
     waypoint_paths = load_waypoint_paths(APP_CONFIG.waypoint_paths_dir)
     if not waypoint_paths:
         _report_missing_waypoint_paths()
         return True, None, screen
 
-    pygame.display.set_caption("Tello - Scelta del percorso")
-    selected_path = select_waypoint_path_interactive(screen, waypoint_paths)
+    pygame.display.set_caption("Tello - Scelta dello scenario")
+    selected_path = select_waypoint_path_interactive(
+        screen,
+        waypoint_paths,
+        [_model_labels(required_model_names(p)) for p in waypoint_paths],
+    )
     pygame.display.set_caption(APP_CONFIG.window_title)
     screen = pygame.display.get_surface()
 
@@ -189,7 +178,7 @@ def _phase_mission_path(screen):
 
 
 def _phase_connect(subsystems: Subsystems):
-    _announce_phase("Fase 4 · Collegamento al drone")
+    _announce_phase("Fase 2 · Collegamento al drone")
 
     try:
         subsystems.controller = create_controller()
@@ -219,19 +208,26 @@ def _phase_connect(subsystems: Subsystems):
     return controller
 
 
-def _build_detectors(selected_yolo_models) -> list:
-    if not selected_yolo_models:
+def _build_detectors(model_names) -> list:
+    model_names = list(model_names)
+    if not model_names:
+        print_step("--", "Questo scenario non chiede nessun modello di riconoscimento")
         return []
     try:
-        detectors = create_detectors(selected_yolo_models)
+        detectors = create_detectors(model_names)
     except Exception as exc:
         print_step("!!", f"Non sono riuscito a caricare i modelli: {exc}")
         return []
-    print_step("OK", "Riconosce nel video ciò che i modelli scelti sanno vedere")
+    if not detectors:
+        print_step("!!", "Nessuno dei modelli dello scenario è stato caricato")
+        return []
+    caricati = ", ".join(_model_labels([d["name"] for d in detectors])).lower()
+    print_step("OK", f"Riconosce nel video: {caricati}")
     return detectors
 
 
-def _build_perception(subsystems: Subsystems):
+def _phase_localization(subsystems: Subsystems) -> None:
+    _announce_phase("Fase 3 · Localizzazione")
     pose_estimator = None
     try:
         pose_estimator = create_pose_estimator()
@@ -243,14 +239,17 @@ def _build_perception(subsystems: Subsystems):
         print_step("!!", f"Non ricava la propria posizione dai marker AprilTag: {exc}")
     subsystems.pose_estimator = pose_estimator
 
-    pose_filter = None
-    if pose_estimator is not None:
-        try:
-            pose_filter = create_pose_filter()
-            print_step("OK", "Stabilizza la posizione stimata con il filtro di Kalman")
-        except Exception as exc:
-            print_step("!!", f"Non stabilizza la posizione stimata: {exc}")
-    return pose_estimator, pose_filter
+
+def _build_pose_filter(subsystems: Subsystems):
+    if subsystems.pose_estimator is None:
+        return None
+    try:
+        pose_filter = create_pose_filter()
+        print_step("OK", "Stabilizza la posizione stimata con il filtro di Kalman")
+        return pose_filter
+    except Exception as exc:
+        print_step("!!", f"Non stabilizza la posizione stimata: {exc}")
+        return None
 
 
 def _create_autopilot_for(path) -> Optional[AprilTagAutopilot]:
@@ -273,6 +272,7 @@ def _configure_mission_display(dashboard, *, scenario_name, apriltag_autopilot) 
         home_index=apriltag_autopilot.home_waypoint_index,
         yaw_offset_deg=APP_CONFIG.apriltag_autopilot.yaw_offset_deg,
         site_area=APP_CONFIG.site_area_vertices_m,
+        restricted_areas=APP_CONFIG.restricted_areas_vertices_m,
         world_tags=APP_CONFIG.camera_pose.world_tags,
     )
 
@@ -496,51 +496,32 @@ def _build_loops(
     )
 
 
-def _start_comm_bridge(subsystems: Subsystems) -> None:
-    try:
-        from communication.drone_bridge import create_drone_bridge
-
-        subsystems.comm_bridge = create_drone_bridge()
-        if subsystems.comm_bridge is not None:
-            subsystems.comm_bridge.start()
-            print_step("OK", "Dialoga con l'orologio dell'operatore")
-    except Exception as exc:
-        print_step("!!", f"Non dialoga con l'orologio dell'operatore: {exc}")
-
-
-def _phase_onboard(
-    subsystems: Subsystems,
-    *,
-    dashboard,
-    controller,
-    selected_yolo_models,
-    path,
-) -> None:
+def _phase_onboard(subsystems: Subsystems, *, path) -> None:
     _announce_phase("Fase 5 · Funzioni di bordo")
 
-    detectors = _build_detectors(selected_yolo_models)
-    pose_estimator, pose_filter = _build_perception(subsystems)
+    detectors = _build_detectors(
+        required_model_names(path) if path is not None else ()
+    )
+    pose_filter = _build_pose_filter(subsystems)
     _build_flight_logger(subsystems)
 
     apriltag_autopilot = _build_autopilot(
         subsystems,
         path=path,
-        pose_estimator=pose_estimator,
-        dashboard=dashboard,
+        pose_estimator=subsystems.pose_estimator,
+        dashboard=subsystems.dashboard,
     )
 
     _build_monitors(subsystems, detectors=detectors, path=path)
 
     _build_loops(
         subsystems,
-        controller=controller,
+        controller=subsystems.controller,
         detectors=detectors,
-        pose_estimator=pose_estimator,
+        pose_estimator=subsystems.pose_estimator,
         pose_filter=pose_filter,
         apriltag_autopilot=apriltag_autopilot,
     )
-
-    _start_comm_bridge(subsystems)
 
 
 def _announce_ready(dashboard) -> None:
@@ -558,32 +539,30 @@ def _announce_ready(dashboard) -> None:
     log_console_block(ready_banner)
 
 
-def run_preflight(subsystems: Subsystems, original_stdout) -> bool:
-    dashboard = _start_dashboard(subsystems, original_stdout)
+def run_startup(subsystems: Subsystems, original_stdout) -> bool:
+    _start_dashboard(subsystems, original_stdout)
 
     screen = _phase_manual_control(subsystems)
 
-    scelto, selected_yolo_models, screen = _phase_models(screen)
-    if not scelto:
+    if not _phase_welcome(screen):
         return False
 
-    scelto, selected_path, screen = _phase_mission_path(screen)
-    if not scelto:
+    if _phase_connect(subsystems) is None:
         return False
 
-    controller = _phase_connect(subsystems)
-    if controller is None:
-        return False
+    _phase_localization(subsystems)
 
-    _phase_onboard(
-        subsystems,
-        dashboard=dashboard,
-        controller=controller,
-        selected_yolo_models=selected_yolo_models,
-        path=selected_path,
-    )
+    subsystems.screen = pygame.display.get_surface()
+    return True
 
-    _announce_ready(dashboard)
 
+def arm_mission(subsystems: Subsystems) -> bool:
+    scelto, selected_path, screen = _phase_mission_path(subsystems.screen)
     subsystems.screen = screen
+    if not scelto:
+        return False
+
+    _phase_onboard(subsystems, path=selected_path)
+
+    _announce_ready(subsystems.dashboard)
     return True

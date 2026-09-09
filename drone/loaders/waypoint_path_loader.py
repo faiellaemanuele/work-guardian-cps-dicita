@@ -31,6 +31,25 @@ class WaypointPath:
     dpi_alarm_after_sec: "float | None" = None
 
 
+def required_model_names(path: "WaypointPath") -> tuple[str, ...]:
+    names: list[str] = []
+
+    def add(name: str) -> None:
+        if name and name not in names:
+            names.append(name)
+
+    if path.safety_net_tags_by_stop:
+        add(APP_CONFIG.safety_net_model_name)
+    if path.restricted_area_tolerance_px is not None:
+        add(APP_CONFIG.person_fall_model_name)
+        add(APP_CONFIG.restricted_area_model_name)
+    if path.fall_alarm_after_sec is not None:
+        add(APP_CONFIG.person_fall_model_name)
+    if path.dpi_required:
+        add(APP_CONFIG.dpi_model_name)
+    return tuple(names)
+
+
 def _parse_supervision_waypoints(raw, num_waypoints, filename):
     if raw is None:
         return None

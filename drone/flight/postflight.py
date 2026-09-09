@@ -9,9 +9,45 @@ import pygame
 from drone.config import APP_CONFIG
 from drone.hardware.joystick import close_joystick
 from drone.flight.preflight import Subsystems
+from drone.perception.vision_loop import stop_mqtt_client
 from drone.ui.console import SEP_THIN, print_event, set_alert_sink
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _landed_by_pilot(subsystems: Subsystems) -> bool:
+    pilot_commands = subsystems.pilot_commands
+    return pilot_commands is not None and pilot_commands.landed_by_pilot()
+
+
+def release_mission(subsystems: Subsystems) -> None:
+    controller = subsystems.controller
+    if controller is not None:
+        try:
+            controller.send_rc_control(0, 0, 0, 0)
+        except Exception:
+            pass
+
+    vision_loop = subsystems.vision_loop
+    if vision_loop is not None:
+        try:
+            vision_loop.stop()
+        except Exception:
+            LOGGER.warning("Errore durante l'arresto del thread di riconoscimento.", exc_info=True)
+
+    try:
+        cv2.destroyAllWindows()
+    except cv2.error:
+        pass
+
+    subsystems.vision_loop = None
+    subsystems.pilot_commands = None
+    subsystems.flight_data_logger = None
+    subsystems.apriltag_autopilot = None
+    subsystems.safety_net_monitor = None
+    subsystems.person_monitor = None
+    subsystems.dpi_monitor = None
+    subsystems.scenario_name = None
 
 
 def run_postflight(subsystems: Subsystems, original_stdout) -> None:
@@ -22,7 +58,6 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
     vision_loop = subsystems.vision_loop
     flight_data_logger = subsystems.flight_data_logger
     dashboard = subsystems.dashboard
-    comm_bridge = subsystems.comm_bridge
 
     if controller is not None:
         try:
@@ -36,17 +71,13 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
         except Exception:
             LOGGER.warning("Atterraggio di sicurezza non riuscito durante la chiusura.", exc_info=True)
 
-    if comm_bridge is not None:
-        try:
-            comm_bridge.stop()
-        except Exception:
-            LOGGER.warning("Errore durante la chiusura del canale di comunicazione.", exc_info=True)
-
     if vision_loop is not None:
         try:
             vision_loop.stop()
         except Exception:
             LOGGER.warning("Errore durante l'arresto del thread di riconoscimento.", exc_info=True)
+
+    stop_mqtt_client()
 
     if controller is not None:
         try:
@@ -54,7 +85,11 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
         except Exception:
             pass
 
-    if flight_data_logger is not None:
+    if flight_data_logger is not None and _landed_by_pilot(subsystems):
+        print_event(
+            "Atterraggio comandato dal pilota: la sessione si chiude senza salvare i dati"
+        )
+    elif flight_data_logger is not None:
         try:
             if flight_data_logger.has_data():
                 session_dir = flight_data_logger.export_session(

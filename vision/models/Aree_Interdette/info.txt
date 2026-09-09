@@ -1,8 +1,8 @@
-Aree_interdette
+Aree_Interdette
 
 Riconosce i rettangoli rossi che delimitano a pavimento le aree da non
 superare. Una sola classe, Red Rectangle. Insieme alle persone riconosciute da
-Caduta_delle_persone alimenta l'allarme di superamento, uno dei controlli delle
+Caduta_delle_Persone alimenta l'allarme di superamento, uno dei controlli delle
 soste di supervisione. I pesi che il sistema di volo carica sono
 weights/best.pt.
 
@@ -16,7 +16,7 @@ livelli, 9.465.567 parametri, 20,5 GFLOPs.
     model = YOLO('yolo26s.pt')
     model.train(
         data='vision/training/trainer/datasets/verRedRect_Lab/data.yaml',
-        name='Aree_interdette',
+        name='Aree_Interdette',
         project='vision/models',
         epochs=30,
         patience=10,

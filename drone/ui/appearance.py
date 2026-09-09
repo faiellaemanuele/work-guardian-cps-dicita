@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
+
+PROJECT_TITLE: str = "WORK GUARDIAN"
+
+ASSETS_DIR: Path = Path(__file__).resolve().parent / "assets"
+
+LOGO_GLOB: str = "logo_work_guardian.*"
 
 WINDOW_TITLE: str = "Tello - Pilotaggio manuale"
 
@@ -25,6 +32,6 @@ class DashboardConfig:
     terminal_title: str = "Terminale drone"
     alerts_title: str = "Log degli alert"
 
-    map_info_col_width: int = 270
+    map_info_col_width: int = 440
 
     max_lines: int = 500

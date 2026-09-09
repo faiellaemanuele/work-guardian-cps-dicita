@@ -53,18 +53,6 @@ def _status_label_widths(labels: tuple[str, ...], size: int) -> int:
     return max_w
 
 
-def format_optional_float(value, precision=2):
-    if value is None:
-        return "--"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "--"
-    if round(number, precision) == 0.0:
-        number = 0.0
-    return f"{number:.{precision}f}"
-
-
 _PANEL_BG = (22, 22, 26)
 _PANEL_ALPHA = 160
 _PANEL_SUPERSAMPLE = 3
@@ -122,6 +110,21 @@ def _pi_drone(draw, cx, cy, s, color):
         draw.ellipse((ex - r, ey - r, ex + r, ey + r), outline=color, width=w)
     r = max(1, round(1.8 * s))
     draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+
+
+def _pi_gamepad(draw, cx, cy, s, color):
+    w = _icon_stroke(s)
+    rx, ry = 8 * s, 5 * s
+    draw.rounded_rectangle(
+        (cx - rx, cy - ry, cx + rx, cy + ry), radius=int(2.6 * s),
+        outline=color, width=w,
+    )
+    draw.line((cx - 5.2 * s, cy, cx - 2.4 * s, cy), fill=color, width=w)
+    draw.line((cx - 3.8 * s, cy - 1.4 * s, cx - 3.8 * s, cy + 1.4 * s), fill=color, width=w)
+    r = max(1, round(1.15 * s))
+    for dx, dy in ((3.0, -1.3), (5.4, 0.6)):
+        ex, ey = cx + dx * s, cy + dy * s
+        draw.ellipse((ex - r, ey - r, ex + r, ey + r), fill=color)
 
 
 def _pi_eye(draw, cx, cy, s, color):
@@ -182,6 +185,10 @@ def _composite_rgba(frame, x0, y0, panel):
 
 
 _PANEL_LABEL_PX = 16
+_PANEL_TITLE_PX = 17
+_PANEL_TITLE_H = 24
+_PANEL_TITLE_GAP = 8
+_PANEL_TITLE_COLOR = (236, 242, 246)
 _PANEL_X0, _PANEL_Y0 = 10, 10
 _PANEL_PX = 14
 _PANEL_ICON_W = 18
@@ -191,37 +198,78 @@ _PANEL_SEP_GAP = 6
 _PANEL_PAD_TOP, _PANEL_PAD_BOTTOM = 8, 12
 _PANEL_GAUGE_W = 36
 
-_PANEL_LABELS = ("Connesso", "In volo", "Supervisione", "Autopilota")
+DRONE_PANEL_TITLE = "Stato drone"
+WATCH_PANEL_TITLE = "Stato orologio"
+
+_PANEL_LABELS = ("Connesso", "Joystick", "In volo", "Supervisione", "Autopilota")
+_WATCH_LABELS = ("Connessione",)
 
 
-def _status_panel_base_width(batt_text: str = "100%") -> int:
+def _panel_base_width(labels: tuple[str, ...], title: str, batt_text: str) -> int:
     text_x = _PANEL_PX + _PANEL_ICON_W + _PANEL_GAP
-    max_label_w = _status_label_widths(_PANEL_LABELS, _PANEL_LABEL_PX)
+    max_label_w = _status_label_widths(labels, _PANEL_LABEL_PX)
     pct_w = int(round(fonts.sans(_PANEL_LABEL_PX + 2).getlength(batt_text)))
+    title_w = int(round(fonts.sans_bold(_PANEL_TITLE_PX).getlength(title)))
     body_row_w = text_x + max_label_w + _PANEL_PX
     batt_row_w = _PANEL_PX + _PANEL_GAUGE_W + _PANEL_GAP + pct_w + _PANEL_PX
-    return max(body_row_w, batt_row_w)
+    title_row_w = 2 * _PANEL_PX + title_w
+    return max(body_row_w, batt_row_w, title_row_w)
+
+
+def _panels_base_width(batt_text: str = "100%") -> int:
+    return max(
+        _panel_base_width(_PANEL_LABELS, DRONE_PANEL_TITLE, batt_text),
+        _panel_base_width(_WATCH_LABELS, WATCH_PANEL_TITLE, batt_text),
+    )
+
+
+def _panel_base_height(rows: int) -> int:
+    return (
+        _PANEL_PAD_TOP + _PANEL_TITLE_H + _PANEL_TITLE_GAP
+        + rows * _PANEL_ROW_H + _PANEL_SEP_GAP + _PANEL_ROW_H + _PANEL_PAD_BOTTOM
+    )
 
 
 def status_panel_right_edge() -> int:
-    width = _status_panel_base_width() * _STATUS_PANEL_SCALE
+    width = _panels_base_width() * _STATUS_PANEL_SCALE
     return _PANEL_X0 + int(round(width))
 
 
+def watch_panel_left_edge(frame_width: int) -> int:
+    width = _panels_base_width() * _STATUS_PANEL_SCALE
+    return int(frame_width) - _PANEL_X0 - int(round(width))
+
+
 _STATUS_PANEL_CACHE: dict[tuple, "Image.Image"] = {}
+_WATCH_PANEL_CACHE: dict[tuple, "Image.Image"] = {}
 
 
 def _build_status_panel(
-    connected, flying, detection_enabled, autonomy_enabled, batt_v,
+    connected, joystick, flying, detection_enabled, autonomy_enabled, batt_v,
 ):
-    batt_text = "--" if batt_v is None else f"{int(batt_v)}%"
+    return _build_panel(
+        DRONE_PANEL_TITLE,
+        [
+            ("Connesso",     connected,                _pi_wifi),
+            ("Joystick",     bool(joystick),           _pi_gamepad),
+            ("In volo",      flying,                   _pi_drone),
+            ("Supervisione", bool(detection_enabled),  _pi_eye),
+            ("Autopilota",   bool(autonomy_enabled),   _pi_pin),
+        ],
+        batt_v,
+    )
 
-    status_rows = [
-        ("Connesso",     connected,                _pi_wifi),
-        ("In volo",      flying,                   _pi_drone),
-        ("Supervisione", bool(detection_enabled),  _pi_eye),
-        ("Autopilota",   bool(autonomy_enabled),   _pi_pin),
-    ]
+
+def _build_watch_panel(connected, batt_v):
+    return _build_panel(
+        WATCH_PANEL_TITLE,
+        [("Connessione", bool(connected), _pi_wifi)],
+        batt_v,
+    )
+
+
+def _build_panel(title, status_rows, batt_v):
+    batt_text = "--" if batt_v is None else f"{int(batt_v)}%"
 
     label_px = _PANEL_LABEL_PX
     px     = _PANEL_PX
@@ -233,8 +281,8 @@ def _build_status_panel(
     pad_top, pad_bottom = _PANEL_PAD_TOP, _PANEL_PAD_BOTTOM
     gauge_w = _PANEL_GAUGE_W
 
-    bg_w = _status_panel_base_width(batt_text)
-    bg_h = pad_top + len(status_rows) * rh + sep_gap + rh + pad_bottom
+    bg_w = _panels_base_width(batt_text)
+    bg_h = _panel_base_height(len(status_rows))
 
     ss = _PANEL_SUPERSAMPLE
     img = Image.new("RGBA", (bg_w * ss, bg_h * ss), (0, 0, 0, 0))
@@ -250,6 +298,13 @@ def _build_status_panel(
     icon_cx = (px + icon_w // 2) * ss
     text_x_hi = text_x * ss
     y = pad_top
+
+    draw.text(
+        (px * ss, (y + _PANEL_TITLE_H // 2) * ss), title,
+        font=fonts.sans_bold(_PANEL_TITLE_PX * ss),
+        fill=_PANEL_TITLE_COLOR, anchor="lm",
+    )
+    y += _PANEL_TITLE_H + _PANEL_TITLE_GAP
 
     for label, active, draw_icon in status_rows:
         cy = (y + rh // 2) * ss
@@ -287,11 +342,13 @@ def draw_status_overlay(
     frame, cached_status, detection_enabled=False, autonomy_enabled=False,
 ):
     connected = bool(cached_status.get("connected", False))
+    joystick  = bool(cached_status.get("joystick",  False))
     flying    = bool(cached_status.get("flying",    False))
     batt_v    = cached_status.get("battery")
 
     key = (
         connected,
+        joystick,
         flying,
         bool(detection_enabled),
         bool(autonomy_enabled),
@@ -300,7 +357,7 @@ def draw_status_overlay(
     panel = _STATUS_PANEL_CACHE.get(key)
     if panel is None:
         panel = _build_status_panel(
-            connected, flying, detection_enabled, autonomy_enabled, batt_v,
+            connected, joystick, flying, detection_enabled, autonomy_enabled, batt_v,
         )
         _STATUS_PANEL_CACHE.clear()
         _STATUS_PANEL_CACHE[key] = panel
@@ -308,15 +365,143 @@ def draw_status_overlay(
     _composite_rgba(frame, _PANEL_X0, _PANEL_Y0, panel)
 
 
-_BANNER_TOP_Y = 22
+SCENARIO_HINT_TEXT = "torna alla scelta dello scenario"
+
+_HINT_SS = 2
+_HINT_H = 42
+_HINT_PAD = 16
+_HINT_GAP = 12
+_HINT_BOTTOM_GAP = 26
+_HINT_BG = (18, 20, 27, 226)
+_HINT_KEY_BG = (224, 154, 16, 255)
+_HINT_KEY_TEXT = (20, 16, 6)
+_HINT_TEXT = (232, 235, 242)
+
+_HINT_CACHE: dict[tuple, "Image.Image"] = {}
+
+
+def _build_scenario_hint(key_label: str, text: str):
+    ss = _HINT_SS
+    font_key = fonts.sans_bold(17 * ss)
+    font_text = fonts.sans(17 * ss)
+    pad = _HINT_PAD * ss
+    key_w = max(int(font_key.getlength(key_label)) + 14 * ss, 26 * ss)
+    text_w = int(font_text.getlength(text))
+    w = pad + key_w + _HINT_GAP * ss + text_w + pad
+    h = _HINT_H * ss
+
+    panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(panel)
+    draw.rounded_rectangle(
+        (0, 0, w - 1, h - 1), radius=h // 2,
+        fill=_HINT_BG, outline=(*_HINT_KEY_BG[:3], 235), width=ss,
+    )
+    cy = h // 2
+    draw.rounded_rectangle(
+        (pad, cy - 13 * ss, pad + key_w, cy + 13 * ss), radius=7 * ss,
+        fill=_HINT_KEY_BG,
+    )
+    draw.text((pad + key_w // 2, cy), key_label, font=font_key, fill=_HINT_KEY_TEXT, anchor="mm")
+    draw.text(
+        (pad + key_w + _HINT_GAP * ss, cy), text,
+        font=font_text, fill=_HINT_TEXT, anchor="lm",
+    )
+    return panel.resize((w // ss, h // ss), Image.LANCZOS)
+
+
+def draw_scenario_hint(frame, key_label: str):
+    key = (key_label, SCENARIO_HINT_TEXT)
+    panel = _HINT_CACHE.get(key)
+    if panel is None:
+        panel = _build_scenario_hint(key_label, SCENARIO_HINT_TEXT)
+        _HINT_CACHE.clear()
+        _HINT_CACHE[key] = panel
+
+    h, w = frame.shape[:2]
+    x0 = (w - panel.width) // 2
+    y0 = h - panel.height - _HINT_BOTTOM_GAP
+    if x0 < 0 or y0 < 0:
+        return
+    _composite_rgba(frame, x0, y0, panel)
+
+
+def draw_watch_overlay(frame, watch_status=None):
+    watch_status = watch_status or {}
+    connected = bool(watch_status.get("connected", False))
+    batt_v = watch_status.get("battery")
+
+    key = (connected, None if batt_v is None else int(batt_v))
+    panel = _WATCH_PANEL_CACHE.get(key)
+    if panel is None:
+        panel = _build_watch_panel(connected, batt_v)
+        _WATCH_PANEL_CACHE.clear()
+        _WATCH_PANEL_CACHE[key] = panel
+
+    x0 = frame.shape[1] - _PANEL_X0 - panel.width
+    _composite_rgba(frame, max(0, x0), _PANEL_Y0, panel)
+
+
+_TITLE_PX = 34
+_TITLE_TRACKING_PX = 6
+_TITLE_Y = 16
+_TITLE_COLOR = (243, 247, 250)
+_TITLE_SHADOW_ALPHA = 150
+_TITLE_SHADOW_BLUR = 5
+_TITLE_BAND_H = int(_TITLE_PX * 1.55) + 2 * _TITLE_SHADOW_BLUR
+_TITLE_CACHE: dict[str, "Image.Image"] = {}
+
+
+def project_title_bottom_edge() -> int:
+    return _TITLE_Y + _TITLE_BAND_H
+
+
+def _build_project_title(title: str):
+    ss = _PANEL_SUPERSAMPLE
+    font = fonts.sans_bold(_TITLE_PX * ss)
+    tracking = _TITLE_TRACKING_PX * ss
+    widths = [font.getlength(ch) for ch in title]
+    text_w = int(round(sum(widths) + tracking * max(0, len(title) - 1)))
+    pad = _TITLE_SHADOW_BLUR * 3 * ss
+    img = Image.new("RGBA", (text_w + 2 * pad, _TITLE_BAND_H * ss), (0, 0, 0, 0))
+
+    glyphs = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(glyphs)
+    x = pad
+    cy = img.height // 2
+    for ch, w in zip(title, widths):
+        draw.text((x, cy), ch, font=font, fill=(*_TITLE_COLOR, 255), anchor="lm")
+        x += w + tracking
+
+    shadow = glyphs.split()[3].point(lambda a: a * _TITLE_SHADOW_ALPHA // 255)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(_TITLE_SHADOW_BLUR * ss))
+    img.paste(Image.new("RGBA", img.size, (0, 0, 0, 255)), (0, 0), mask=shadow)
+    img.alpha_composite(glyphs)
+
+    return img.resize((img.width // ss, _TITLE_BAND_H), Image.LANCZOS)
+
+
+def draw_project_title(frame, title: str):
+    if not title:
+        return
+    panel = _TITLE_CACHE.get(title)
+    if panel is None:
+        panel = _build_project_title(title)
+        _TITLE_CACHE.clear()
+        _TITLE_CACHE[title] = panel
+    x0 = (frame.shape[1] - panel.width) // 2
+    _composite_rgba(frame, max(0, x0), _TITLE_Y, panel)
+
+
+_BANNER_GAP = 8
 _SAFETY_NET_BANNER_W = 500
 _SAFETY_NET_BANNER_H = 68
 _SAFETY_NET_BANNER_H_ALERT = 76
 
 
 def _banner_x(w, bw):
-    panel_right = status_panel_right_edge()
-    bx = panel_right + (w - panel_right - bw) // 2
+    left = status_panel_right_edge()
+    right = watch_panel_left_edge(w)
+    bx = left + (right - left - bw) // 2
     return max(10, min(bx, w - bw - 10))
 
 
@@ -401,7 +586,7 @@ def draw_safety_net_verdict_banner(frame, verdict):
     is_alert = (outcome == "missing")
     bh = _SAFETY_NET_BANNER_H_ALERT if is_alert else _SAFETY_NET_BANNER_H
     bx = _banner_x(w, bw)
-    by = _banner_y_clamped(_BANNER_TOP_Y, bh, h)
+    by = _banner_y_clamped(project_title_bottom_edge() + _BANNER_GAP, bh, h)
 
     _render_safety_net_banner(frame, bx, by, bw, bh, fill, edge, icon, title, is_alert)
 

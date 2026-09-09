@@ -17,10 +17,15 @@ async def process_logic(client, topic, data):
             await client.publish("cantiere/allarmi", payload=json.dumps(alert))
 
     # Logica Orologio: Battito anomalo
+    # L'orologio manda "bpm" (non "heart_rate"), e lo manda null quando il dito
+    # non e' sul sensore: senza il controllo, il confronto con 120 solleverebbe
+    # TypeError e fermerebbe il server.
     if "orologio" in topic:
-        hr = data.get("heart_rate", 80)
-        if hr > 120:
-            print(f"🚨 ALLERTA MEDICA: Battito alto ({hr} bpm)")
+        bpm = data.get("bpm")
+        valida = data.get("lettura_valida", True)
+        if valida and isinstance(bpm, (int, float)):
+            if bpm > 120:
+                print(f"🚨 ALLERTA MEDICA: Battito alto ({bpm} bpm)")
 
 async def main():
     async with aiomqtt.Client("localhost") as client:

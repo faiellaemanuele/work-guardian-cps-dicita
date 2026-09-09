@@ -21,8 +21,21 @@ async def simulate_drone(client):
         await asyncio.sleep(2)
 
 async def simulate_watch(client):
+    # Stessa forma che manda l'orologio vero (wearable/smartwatch.ino), altrimenti
+    # il simulatore proverebbe un contratto che nella realta' non esiste.
     while True:
-        data = {"heart_rate": random.randint(60, 110), "fall_detected": False}
+        estrazione = random.random()
+        if estrazione < 0.15:
+            # Battito alto: deve far scattare l'allerta medica sul server
+            data = {"bpm": random.randint(121, 145), "spo2": random.randint(90, 96),
+                    "stato": "ALLARME", "lettura_valida": True}
+        elif estrazione < 0.20:
+            # Dito non sul sensore: bpm null, il server non deve allarmare
+            data = {"bpm": None, "spo2": None,
+                    "stato": "GUASTO", "lettura_valida": False}
+        else:
+            data = {"bpm": random.randint(60, 100), "spo2": random.randint(95, 100),
+                    "stato": "NORMALE", "lettura_valida": True}
         await client.publish("cantiere/sensori/orologio/operaio_1", payload=json.dumps(data))
         await asyncio.sleep(3)
 

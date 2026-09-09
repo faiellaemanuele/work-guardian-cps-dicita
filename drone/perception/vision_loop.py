@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import threading
@@ -10,6 +11,7 @@ import cv2
 import numpy as np
 
 from drone.config import APP_CONFIG
+from drone.hardware.joystick import is_joystick_connected
 from drone.ui.video import overlay
 from drone.ui.console import print_event
 
@@ -23,6 +25,51 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 VIDEO_WINDOW_TITLE = APP_CONFIG.video_window_title
+
+MQTT_TOPIC_DRONE = "cantiere/sensori/drone"
+
+_MQTT_NON_CREATO = object()
+_mqtt_singleton = _MQTT_NON_CREATO
+
+
+def _mqtt_client():
+    global _mqtt_singleton
+    if _mqtt_singleton is not _MQTT_NON_CREATO:
+        return _mqtt_singleton
+
+    _mqtt_singleton = None
+    try:
+        import paho.mqtt.client as mqtt
+
+        try:
+            client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+        except (AttributeError, TypeError):
+            client = mqtt.Client()
+        client.reconnect_delay_set(min_delay=1, max_delay=30)
+        client.connect_async(APP_CONFIG.mqtt_broker_ip, APP_CONFIG.mqtt_broker_port, 30)
+        client.loop_start()
+        _mqtt_singleton = client
+        LOGGER.info(
+            "MQTT | Connessione al broker %s:%s avviata.",
+            APP_CONFIG.mqtt_broker_ip,
+            APP_CONFIG.mqtt_broker_port,
+        )
+    except Exception:
+        LOGGER.warning("MQTT | Canale non disponibile: il volo prosegue senza.", exc_info=True)
+    return _mqtt_singleton
+
+
+def stop_mqtt_client() -> None:
+    global _mqtt_singleton
+    client = _mqtt_singleton
+    _mqtt_singleton = _MQTT_NON_CREATO
+    if client is None or client is _MQTT_NON_CREATO:
+        return
+    try:
+        client.disconnect()
+        client.loop_stop()
+    except Exception:
+        LOGGER.warning("MQTT | Errore durante la chiusura del canale.", exc_info=True)
 
 
 class VisionLoop:
@@ -48,11 +95,23 @@ class VisionLoop:
 
         self.last_status_refresh_at = 0.0
 
+        self._last_mqtt_publish_at: Optional[float] = None
+
         self.cached_status = {
             "connected": False,
+            "joystick": False,
             "flying": False,
             "battery": None,
         }
+
+        self.watch_status = {
+            "connected": False,
+            "battery": None,
+        }
+
+        self.project_title = config.project_title
+
+        self.scenario_key_label = config.joystick.label_scenario
 
         self.flight_data_logger = flight_data_logger
 
@@ -124,6 +183,7 @@ class VisionLoop:
                     )
             self.cached_status = {
                 "connected": status.get("connected", False),
+                "joystick": is_joystick_connected(),
                 "flying": status.get("flying", False),
                 "battery": new_battery,
             }
@@ -175,40 +235,16 @@ class VisionLoop:
                 tag_ids.add(int(tag_id))
         return tag_ids
 
-    def get_detection_summary(self) -> list[dict]:
+    def get_detected_model_names(self) -> set[str]:
         with self._detection_lock:
             snapshot = self._cached_detections
-        summary: list[dict] = []
+        names: set[str] = set()
         for entry in snapshot or []:
-            model_name = entry.get("name")
-            for det in entry.get("detections") or []:
-                # Estrai le variabili
-                current_label = det.get("label")
-                current_confidence = det.get("confidence")
-                
-                # --- INIZIO NUOVO CODICE MQTT ---
-                import paho.mqtt.publish as publish
-                import json
-                
-                # Importa la configurazione (assicurati che APP_CONFIG abbia l'attributo mqtt_broker_ip)
-                from drone.config import APP_CONFIG
-                
-                payload = json.dumps({
-                    "tipo_allarme": current_label, 
-                    "confidenza": current_confidence
-                })
-                # Pubblica l'anomalia sul topic (assicurati che il broker sia attivo e configurato)
-                publish.single("cantiere/allarmi", payload, hostname=APP_CONFIG.mqtt_broker_ip)
-                # --- FINE NUOVO CODICE MQTT ---
-                
-                summary.append(
-                    {
-                        "model": model_name,
-                        "label": current_label,
-                        "confidence": current_confidence,
-                    }
-                )
-        return summary
+            if entry.get("detections"):
+                name = entry.get("name")
+                if name is not None:
+                    names.add(name)
+        return names
 
     def get_detection_summary(self) -> list[dict]:
         with self._detection_lock:
@@ -225,6 +261,54 @@ class VisionLoop:
                     }
                 )
         return summary
+
+    def publish_state(self, *, now: Optional[float] = None) -> bool:
+        now = now if now is not None else time.monotonic()
+        if (
+            self._last_mqtt_publish_at is not None
+            and (now - self._last_mqtt_publish_at) < APP_CONFIG.mqtt_publish_interval_sec
+        ):
+            return False
+
+        client = _mqtt_client()
+        if client is None:
+            return False
+
+        self._last_mqtt_publish_at = now
+        try:
+            payload = json.dumps(self._build_mqtt_payload())
+            client.publish(MQTT_TOPIC_DRONE, payload)
+        except Exception:
+            LOGGER.warning("MQTT | Telemetria non pubblicata.", exc_info=True)
+            return False
+        return True
+
+    def _build_mqtt_payload(self) -> dict:
+        pose = self.get_latest_pose_estimate()
+        position = None
+        if pose:
+            world = pose.get("position_world")
+            if world is not None:
+                valori = list(np.asarray(world).flatten())
+                position = {
+                    "x": round(float(valori[0]), 3),
+                    "y": round(float(valori[1]), 3),
+                    "z": round(float(valori[2]), 3),
+                    "yaw": round(float(pose.get("yaw_world_deg") or 0.0), 1),
+                }
+
+        detections = [
+            {"label": det["label"], "conf": det["confidence"]}
+            for det in self.get_detection_summary()
+            if det.get("label") is not None
+        ]
+
+        return {
+            "battery": self.cached_status.get("battery"),
+            "is_flying": bool(self.cached_status.get("flying", False)),
+            "position": position,
+            "detections": detections,
+        }
 
     def get_cached_detections_snapshot(self) -> list:
         with self._detection_lock:
@@ -432,8 +516,13 @@ class VisionLoop:
                 detection_enabled=detection_is_active,
                 autonomy_enabled=autonomy_enabled,
             )
+            overlay.draw_watch_overlay(display_frame, self.watch_status)
+            overlay.draw_project_title(display_frame, self.project_title)
 
             self._maybe_draw_safety_net_banner(display_frame)
+
+            if not self.cached_status.get("flying", False):
+                overlay.draw_scenario_hint(display_frame, self.scenario_key_label)
 
             if dashboard is not None:
                 display_frame = dashboard.attach_panels(display_frame)
@@ -486,6 +575,7 @@ class VisionLoop:
                 self.last_filtered_pose_estimate,
                 fresh=self.get_latest_pose_estimate() is not None,
             )
+            dashboard.set_visible_tags(self.get_visible_tag_ids())
 
         self._show_frame(display_frame, dashboard, detection_is_active, autonomy_enabled)
 

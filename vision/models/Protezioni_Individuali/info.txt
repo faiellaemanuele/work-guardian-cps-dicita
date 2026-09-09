@@ -1,4 +1,4 @@
-Protezioni_individuali
+Protezioni_Individuali
 
 Riconosce i dispositivi di protezione individuale e, soprattutto, la loro
 assenza: alle quattro classi Helmet, Vest, Goggles e Safety_shoes se ne
@@ -16,7 +16,7 @@ GFLOPs.
     model = YOLO('yolo26s.pt')
     model.train(
         data='vision/training/trainer/datasets/verPPE_original_clean/data.yaml',
-        name='Protezioni_individuali',
+        name='Protezioni_Individuali',
         project='vision/models',
         epochs=300,
         patience=50,
@@ -29,7 +29,7 @@ GFLOPs.
 
 La sessione è stata interrotta e ripresa dal checkpoint:
 
-    model = YOLO('vision/models/Protezioni_individuali/weights/last.pt')
+    model = YOLO('vision/models/Protezioni_Individuali/weights/last.pt')
     model.train(resume=True)
 
 Le 300 epoche sono il totale dell'addestramento, non della sola ripresa:

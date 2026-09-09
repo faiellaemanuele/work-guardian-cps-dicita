@@ -15,8 +15,11 @@ _AXES = (198, 198, 198)
 _ROUTE = (154, 154, 154)
 _CIRCLE_BORDER = (0, 0, 0)
 
-_SITE_BORDER = (150, 159, 168)
-_SITE_FILL = (246, 248, 250)
+_SITE_BORDER = (224, 154, 16)
+_SITE_FILL = (253, 246, 230)
+
+_RESTRICTED_BORDER = (203, 58, 52)
+_RESTRICTED_FILL = (250, 226, 223)
 
 _TAG_FLOOR = (23, 190, 207)
 _TAG_HIGH = (31, 119, 180)
@@ -24,8 +27,6 @@ _TAG_FLOOR_FILL = (209, 243, 246)
 _TAG_HIGH_FILL = (212, 229, 240)
 
 _TAG_HIGH_Z_M = 0.75
-
-_TAG_SIDE_RATIO = 1.1
 
 _FILL_IDLE = (255, 255, 255)
 _FILL_REACHED = (0, 137, 123)
@@ -37,26 +38,41 @@ _LABEL_ON_FILL = (255, 255, 255)
 _DRONE_FRESH = (55, 138, 221)
 _DRONE_STALE = (150, 150, 150)
 
-LEGEND_COLORS: tuple[tuple[str, tuple[int, int, int]], ...] = (
-    ("raggiunto", _FILL_REACHED),
-    ("supervisione", _FILL_SUPERVISING),
+LegendEntry = tuple[str, str, tuple[int, int, int], tuple[int, int, int]]
+
+LEGEND_WAYPOINTS: tuple[LegendEntry, ...] = (
+    ("waypoint da raggiungere", "dot", _FILL_IDLE, _CIRCLE_BORDER),
+    ("waypoint raggiunto", "dot", _FILL_REACHED, _CIRCLE_BORDER),
+    ("waypoint di supervisione", "dot", _FILL_SUPERVISING, _CIRCLE_BORDER),
+)
+
+LEGEND_SCENE: tuple[LegendEntry, ...] = (
+    ("marker a pavimento", "square", _TAG_FLOOR_FILL, _TAG_FLOOR),
+    ("marker in quota", "square", _TAG_HIGH_FILL, _TAG_HIGH),
+    ("area di cantiere", "area", _SITE_FILL, _SITE_BORDER),
+    ("area interdetta", "area", _RESTRICTED_FILL, _RESTRICTED_BORDER),
 )
 
 _VISIT_HIGHLIGHT_SEC = 1.5
 
 _GRID_STEP_M = 0.5
 
-_CIRCLE_RADIUS_MAX = 30
-_CIRCLE_SPACING_RATIO = 0.44
+_CIRCLE_RADIUS_PX = 15
+_CIRCLE_LABEL_WIDTH_RATIO = 1.7
 
-_DRONE_MIN_SCALE = 0.35
+_TAG_HALF_PX = 10
 
-_DRONE_ENLARGE = 1.3
+_DRONE_SCALE = 0.6
 
-_ARROW_START = 48.0
-_ARROW_LENGTH = 86.0
-_ARROW_GROWTH = 18.0
-_RING_RADIUS = 40.0
+_TAG_SEEN_HIGHLIGHT_SEC = 0.8
+_TAG_SEEN_HALO_PX = 4
+_TAG_SEEN_HALO_MIX = 0.55
+
+_TRIAD_X = (214, 60, 55)
+_TRIAD_Y = (46, 160, 84)
+_TRIAD_Z = (55, 138, 221)
+_TRIAD_MARGIN_PX = 12
+_TRIAD_ARM_PX = 26
 
 
 @dataclass
@@ -90,6 +106,7 @@ class MissionMapState:
         waypoints: Sequence[Any],
         home_index: Optional[int] = None,
         site_area: Sequence[Sequence[float]] = (),
+        restricted_areas: Sequence[Sequence[Sequence[float]]] = (),
         world_tags: Optional[Mapping[int, Any]] = None,
         time_source: Optional[Callable[[], float]] = None,
     ):
@@ -99,6 +116,15 @@ class MissionMapState:
         vertices = tuple((float(v[0]), float(v[1])) for v in site_area)
         self.site_area: tuple[tuple[float, float], ...] = (
             vertices if len(vertices) >= 3 else ()
+        )
+
+        self.restricted_areas: tuple[tuple[tuple[float, float], ...], ...] = tuple(
+            polygon
+            for polygon in (
+                tuple((float(v[0]), float(v[1])) for v in area)
+                for area in restricted_areas
+            )
+            if len(polygon) >= 3
         )
 
         self.tags: tuple[MapTag, ...] = ()
@@ -140,6 +166,7 @@ class MissionMapState:
         self._supervising_circle: Optional[int] = None
         self._supervision_remaining: Optional[float] = None
         self._finished = False
+        self._tag_seen_until: dict[int, float] = {}
 
     def update_command(self, command: Mapping[str, Any]) -> None:
         if not command:
@@ -171,6 +198,22 @@ class MissionMapState:
                 circle.highlight_until = 0.0
             else:
                 circle.highlight_until = now + _VISIT_HIGHLIGHT_SEC
+
+    def set_visible_tags(self, tag_ids) -> None:
+        if not tag_ids:
+            return
+        deadline = self._now() + _TAG_SEEN_HIGHLIGHT_SEC
+        for tag_id in tag_ids:
+            self._tag_seen_until[int(tag_id)] = deadline
+
+    def visible_tag_ids(self, now: Optional[float] = None) -> set[int]:
+        if now is None:
+            now = self._now()
+        return {
+            tag_id
+            for tag_id, until in self._tag_seen_until.items()
+            if now < until
+        }
 
     def set_autonomy_inactive(self) -> None:
         self._supervising_circle = None
@@ -270,9 +313,6 @@ def _fit_transform(circles, width, height, pad_px, reserved_right=0, reserved_le
     return to_px, scale, (min_x, max_x, min_y, max_y)
 
 
-_TAG_LABEL_MIN_HALF = _ss(10)
-
-
 def _fill_site_area(draw, vertices, to_px) -> None:
     if not vertices:
         return
@@ -284,6 +324,15 @@ def _draw_site_border(draw, vertices, to_px) -> None:
         return
     points = [to_px(x, y) for x, y in vertices]
     draw.line(points + [points[0]], fill=_SITE_BORDER, width=_ss(2), joint="curve")
+
+
+def _draw_restricted_areas(draw, areas, to_px) -> None:
+    for vertices in areas:
+        points = [to_px(x, y) for x, y in vertices]
+        draw.polygon(points, fill=_RESTRICTED_FILL)
+        draw.line(
+            points + [points[0]], fill=_RESTRICTED_BORDER, width=_ss(2), joint="curve",
+        )
 
 
 def _draw_grid(draw, to_px, bounds, width, height):
@@ -323,44 +372,50 @@ def _draw_route(draw, state: MissionMapState, to_px) -> None:
         draw.line((*to_px(ca.x, ca.y), *to_px(cb.x, cb.y)), fill=_ROUTE, width=_ss(2))
 
 
-def _draw_tags(draw, tags, to_px, radius: int) -> None:
+def _mix(color, other, factor):
+    return tuple(
+        int(round(c + (o - c) * factor)) for c, o in zip(color[:3], other[:3])
+    )
+
+
+def _draw_tags(draw, tags, to_px, seen_ids=()) -> None:
     if not tags:
         return
-    half = radius * _TAG_SIDE_RATIO / 2.0
-    points = [to_px(t.x, t.y) for t in tags]
-    if len(points) > 1:
-        closest = min(
-            math.dist(a, b)
-            for index, a in enumerate(points)
-            for b in points[index + 1:]
-        )
-        half = min(half, closest * _CIRCLE_SPACING_RATIO)
-    half = int(max(_ss(4), half))
-
-    font = fonts.sans(int(half * 0.95)) if half >= _TAG_LABEL_MIN_HALF else None
-    for tag, (cx, cy) in zip(tags, points):
+    half = _ss(_TAG_HALF_PX)
+    halo = half + _ss(_TAG_SEEN_HALO_PX)
+    font = fonts.sans(int(half * 0.95))
+    font_seen = fonts.sans_bold(int(half * 0.95))
+    for tag in tags:
+        cx, cy = to_px(tag.x, tag.y)
         high = tag.z >= _TAG_HIGH_Z_M
         color = _TAG_HIGH if high else _TAG_FLOOR
+        if tag.tag_id in seen_ids:
+            draw.rectangle(
+                (cx - halo, cy - halo, cx + halo, cy + halo),
+                fill=_mix(color, _MAP_BG, _TAG_SEEN_HALO_MIX),
+            )
+            draw.rectangle(
+                (cx - half, cy - half, cx + half, cy + half),
+                fill=color, outline=color, width=max(1, _ss(1.5)),
+            )
+            draw.text((cx, cy), str(tag.tag_id), font=font_seen, fill=_MAP_BG, anchor="mm")
+            continue
         draw.rectangle(
             (cx - half, cy - half, cx + half, cy + half),
             fill=_TAG_HIGH_FILL if high else _TAG_FLOOR_FILL,
             outline=color, width=max(1, _ss(1.5)),
         )
-        if font is not None:
-            draw.text((cx, cy), str(tag.tag_id), font=font, fill=color, anchor="mm")
+        draw.text((cx, cy), str(tag.tag_id), font=font, fill=color, anchor="mm")
 
 
-def _circle_radius(circles, to_px) -> int:
-    limit = float(_ss(_CIRCLE_RADIUS_MAX))
-    points = [to_px(c.x, c.y) for c in circles]
-    if len(points) > 1:
-        closest = min(
-            math.dist(a, b)
-            for index, a in enumerate(points)
-            for b in points[index + 1:]
-        )
-        limit = min(limit, closest * _CIRCLE_SPACING_RATIO)
-    return int(max(_ss(9), limit))
+def _circle_label_font(label: str, radius: int):
+    limit = radius * _CIRCLE_LABEL_WIDTH_RATIO
+    size = max(_ss(4), int(radius * 0.95))
+    font = fonts.sans_bold(size)
+    while size > _ss(4) and font.getlength(label) > limit:
+        size -= 1
+        font = fonts.sans_bold(size)
+    return font
 
 
 def _draw_circles(draw, state: MissionMapState, fills: list[str], to_px, radius: int) -> None:
@@ -376,13 +431,12 @@ def _draw_circles(draw, state: MissionMapState, fills: list[str], to_px, radius:
             (cx - radius, cy - radius, cx + radius, cy + radius),
             fill=fill, outline=_CIRCLE_BORDER, width=_ss(2),
         )
-        ratio = 0.72 if len(circle.label) <= 2 else 0.50
-        font = fonts.sans(max(_ss(7), int(radius * ratio)))
+        font = _circle_label_font(circle.label, radius)
         color = _LABEL_ON_IDLE if state_name == "idle" else _LABEL_ON_FILL
         draw.text((cx, cy), circle.label, font=font, fill=color, anchor="mm")
 
 
-def _arrow(draw, x0, y0, x1, y1, color, width, head) -> None:
+def _axis_arrow(draw, x0, y0, x1, y1, color, width, head) -> None:
     draw.line((x0, y0, x1, y1), fill=color, width=width)
     angle = math.atan2(y1 - y0, x1 - x0)
     for side in (+1, -1):
@@ -393,55 +447,34 @@ def _arrow(draw, x0, y0, x1, y1, color, width, head) -> None:
         )
 
 
-def _draw_rotation_ring(draw, cx, cy, radius, clockwise, color, width, head) -> None:
-    start, end = (35, 305) if clockwise else (-125, 145)
-    draw.arc((cx - radius, cy - radius, cx + radius, cy + radius),
-             start, end, fill=color, width=width)
-    angle = math.radians(end if clockwise else start)
-    px, py = cx + math.cos(angle) * radius, cy + math.sin(angle) * radius
-    tangent = angle + (math.pi / 2 if clockwise else -math.pi / 2)
-    for side in (+1, -1):
-        a = tangent + side * math.radians(150)
-        draw.line(
-            (px, py, px + math.cos(a) * head, py + math.sin(a) * head),
-            fill=color, width=width,
-        )
+def _draw_world_triad(draw) -> None:
+    arm = _ss(_TRIAD_ARM_PX)
+    margin = _ss(_TRIAD_MARGIN_PX)
+    width = max(2, _ss(1.8))
+    head = _ss(5)
+    font = fonts.sans_bold(_ss(11))
 
+    ox = margin + _ss(10)
+    oy = margin + arm + _ss(8)
 
-def _draw_movement(draw, cx, cy, heading_deg, command, color, scale) -> None:
-    if not command:
-        return
-    fb = float(command.get("fb", 0) or 0)
-    lr = float(command.get("lr", 0) or 0)
-    yaw = float(command.get("yaw", 0) or 0)
+    _axis_arrow(draw, ox, oy, ox + arm, oy, _TRIAD_X, width, head)
+    _axis_arrow(draw, ox, oy, ox, oy - arm, _TRIAD_Y, width, head)
+    draw.text((ox + arm + _ss(7), oy), "x", font=font, fill=_TRIAD_X, anchor="lm")
+    draw.text((ox, oy - arm - _ss(9)), "y", font=font, fill=_TRIAD_Y, anchor="mm")
 
-    width = max(2, _ss(3.2 * scale))
-    head = _ss(11 * scale)
-    heading = math.radians(heading_deg)
-
-    dx = fb * math.cos(heading) + lr * math.cos(heading - math.pi / 2)
-    dy = fb * math.sin(heading) + lr * math.sin(heading - math.pi / 2)
-    magnitude = math.hypot(dx, dy)
-    if magnitude > 0:
-        start = _ss(_ARROW_START * scale)
-        end = _ss((_ARROW_LENGTH + _ARROW_GROWTH * min(1.0, magnitude / 40.0)) * scale)
-        ux, uy = dx / magnitude, dy / magnitude
-        _arrow(draw, cx + ux * start, cy - uy * start,
-               cx + ux * end, cy - uy * end, color, width, head)
-    if yaw:
-        _draw_rotation_ring(
-            draw, cx, cy, _ss(_RING_RADIUS * scale), yaw > 0, color,
-            max(2, _ss(2.0 * scale)), _ss(7 * scale),
-        )
+    r = _ss(5)
+    draw.ellipse((ox - r, oy - r, ox + r, oy + r), fill=_MAP_BG, outline=_TRIAD_Z, width=width)
+    dot = _ss(1.6)
+    draw.ellipse((ox - dot, oy - dot, ox + dot, oy + dot), fill=_TRIAD_Z)
+    draw.text((ox - _ss(9), oy + _ss(10)), "z", font=font, fill=_TRIAD_Z, anchor="mm")
 
 
 def _draw_drone_marker(draw, x_px, y_px, heading_deg, fresh, width, height,
-                       scale=1.0, command=None) -> None:
+                       scale=_DRONE_SCALE) -> None:
     color = _DRONE_FRESH if fresh else _DRONE_STALE
     margin = _ss(16)
     cx = max(margin, min(width - margin, x_px))
     cy = max(margin, min(height - margin, y_px))
-    scale = scale * _DRONE_ENLARGE
 
     def _w(px_logico):
         return max(1, _ss(px_logico * scale))
@@ -463,8 +496,6 @@ def _draw_drone_marker(draw, x_px, y_px, heading_deg, fresh, width, height,
     dot_r = 4.6 * _SUPERSAMPLE * scale
     draw.ellipse((cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r), fill=color)
 
-    _draw_movement(draw, cx, cy, heading_deg, command, color, scale)
-
 
 def draw_mission_map(
     state: MissionMapState,
@@ -474,7 +505,6 @@ def draw_mission_map(
     drone_xy: Optional[tuple[float, float]] = None,
     drone_heading_deg: float = 0.0,
     drone_pose_fresh: bool = False,
-    drone_command: Optional[Mapping[str, Any]] = None,
     reserved_right_px: int = 0,
     reserved_left_px: int = 0,
     now: Optional[float] = None,
@@ -488,37 +518,33 @@ def draw_mission_map(
     draw = ImageDraw.Draw(img)
 
     base_pad = _ss(6)
-    fit_kwargs = dict(
+    radius = _ss(_CIRCLE_RADIUS_PX)
+    to_px, _scale, bounds = _fit_transform(
+        state.circles, W, H,
+        pad_px=base_pad + radius,
+        extra_pad_px=base_pad + _ss(_TAG_HALF_PX),
         reserved_right=_ss(reserved_right_px), reserved_left=_ss(reserved_left_px),
-        extra_points=tuple(state.site_area) + tuple((t.x, t.y) for t in state.tags),
+        extra_points=(
+            tuple(state.site_area)
+            + tuple(v for area in state.restricted_areas for v in area)
+            + tuple((t.x, t.y) for t in state.tags)
+        ),
     )
-
-    def _fit(radius):
-        return _fit_transform(
-            state.circles, W, H,
-            pad_px=base_pad + radius,
-            extra_pad_px=base_pad + int(radius * _TAG_SIDE_RATIO / 2.0),
-            **fit_kwargs,
-        )
-
-    to_px, _scale, bounds = _fit(_ss(_CIRCLE_RADIUS_MAX))
-    radius = _circle_radius(state.circles, to_px)
-    to_px, _scale, bounds = _fit(radius)
-    radius = _circle_radius(state.circles, to_px)
 
     _fill_site_area(draw, state.site_area, to_px)
     _draw_grid(draw, to_px, bounds, W, H)
     _draw_site_border(draw, state.site_area, to_px)
-    _draw_tags(draw, state.tags, to_px, radius=radius)
+    _draw_restricted_areas(draw, state.restricted_areas, to_px)
+    _draw_tags(draw, state.tags, to_px, state.visible_tag_ids(now))
     _draw_route(draw, state, to_px)
     _draw_circles(draw, state, state.circle_fill_states(now), to_px, radius=radius)
 
     if drone_xy is not None:
         x_px, y_px = to_px(float(drone_xy[0]), float(drone_xy[1]))
-        drone_scale = max(_DRONE_MIN_SCALE, radius / float(_ss(_CIRCLE_RADIUS_MAX)))
         _draw_drone_marker(
             draw, x_px, y_px, drone_heading_deg, drone_pose_fresh, W, H,
-            scale=drone_scale, command=drone_command,
         )
+
+    _draw_world_triad(draw)
 
     return img.resize((width, height), Image.LANCZOS)

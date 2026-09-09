@@ -25,7 +25,8 @@ PALETTE = {
     "sottotitolo":   "#666666",
     "asse_zero":     "#000000",
 
-    "cantiere":      "#969fa8",
+    "cantiere":      "#e09a10",
+    "area_interdetta": "#cb3a34",
     "tag_pavimento": "#17becf",
     "tag_quota":     "#1f77b4",
 

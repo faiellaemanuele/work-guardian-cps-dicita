@@ -29,10 +29,13 @@ COLOR_SUPERVISION = PALETTE["supervisione"]
 COLOR_HOME = PALETTE["home"]
 COLOR_YAW = PALETTE["yaw_heading"]
 COLOR_SITE = PALETTE["cantiere"]
+COLOR_RESTRICTED = PALETTE["area_interdetta"]
 
 SITE_FILL_ALPHA = 0.06
 
 MARKER_FILL_ALPHA = 0.20
+
+RESTRICTED_FILL_ALPHA = 0.14
 
 MARKER_HIGH_Z_THRESHOLD = 0.75
 
@@ -100,6 +103,27 @@ def _draw_site_area(ax, vertices):
         (tuple(vertices[i]), tuple(vertices[(i + 1) % len(vertices)]))
         for i in range(len(vertices))
     )
+
+
+def _draw_restricted_areas(ax, areas):
+    edges = []
+    for vertices in areas:
+        ax.add_patch(
+            Polygon(
+                list(vertices),
+                closed=True,
+                facecolor=to_rgba(COLOR_RESTRICTED, RESTRICTED_FILL_ALPHA),
+                edgecolor=COLOR_RESTRICTED,
+                hatch="///",
+                linewidth=1.8,
+                zorder=3,
+            )
+        )
+        edges += [
+            (tuple(vertices[i]), tuple(vertices[(i + 1) % len(vertices)]))
+            for i in range(len(vertices))
+        ]
+    return tuple(edges)
 
 
 def _draw_markers(ax, world_tags, show_coords):
@@ -296,7 +320,8 @@ class _HandlerHomeMarker(HandlerBase):
 
 
 def _build_legend(ax, *, markers, waypoints, show_yaw, home=False, supervision=False,
-                  floor_tags=False, high_tags=False, site_area=False):
+                  floor_tags=False, high_tags=False, site_area=False,
+                  restricted_areas=False):
     handles = []
     home_handle = None
 
@@ -322,6 +347,14 @@ def _build_legend(ax, *, markers, waypoints, show_yaw, home=False, supervision=F
                 facecolor=to_rgba(COLOR_SITE, SITE_FILL_ALPHA),
                 edgecolor=COLOR_SITE, linewidth=1.6,
                 label="Perimetro del cantiere",
+            )
+        )
+    if restricted_areas:
+        handles.append(
+            Patch(
+                facecolor=to_rgba(COLOR_RESTRICTED, RESTRICTED_FILL_ALPHA),
+                edgecolor=COLOR_RESTRICTED, linewidth=1.6, hatch="///",
+                label="Area interdetta",
             )
         )
     if markers:
@@ -595,16 +628,19 @@ def _place_coord_labels(fig, ax, texts, owners, markers, segments, site_edges=()
 
 
 
-def _scene_bounds(world_tags, waypoints, site_area):
+def _scene_bounds(world_tags, waypoints, site_area, restricted_areas):
+    area_vertices = [v for area in restricted_areas for v in area]
     xs = (
         [pose.position_m[0] for pose in world_tags.values()]
         + [wp.x for wp in waypoints]
         + [v[0] for v in site_area]
+        + [v[0] for v in area_vertices]
     )
     ys = (
         [pose.position_m[1] for pose in world_tags.values()]
         + [wp.y for wp in waypoints]
         + [v[1] for v in site_area]
+        + [v[1] for v in area_vertices]
     )
     return xs, ys
 
@@ -671,8 +707,9 @@ def _render(
     world_tags = APP_CONFIG.camera_pose.world_tags if draw_markers else {}
     waypoints = tuple(waypoints) if draw_waypoints else ()
     site_area = tuple(APP_CONFIG.site_area_vertices_m)
+    restricted_areas = tuple(APP_CONFIG.restricted_areas_vertices_m)
 
-    xs, ys = _scene_bounds(world_tags, waypoints, site_area)
+    xs, ys = _scene_bounds(world_tags, waypoints, site_area, restricted_areas)
     if not xs:
         print(f"Nessun elemento da disegnare: {output_path.name} non viene generata.")
         return
@@ -686,6 +723,7 @@ def _render(
     ax.set_ylim(min(ys) - margin, max(ys) + margin)
 
     site_edges = _draw_site_area(ax, site_area)
+    site_edges += _draw_restricted_areas(ax, restricted_areas)
 
     coord_texts, coord_owners, coord_segments, symbols, coord_sides = _draw_scene(
         ax,
@@ -711,6 +749,7 @@ def _render(
         floor_tags=any(z < MARKER_HIGH_Z_THRESHOLD for z in tag_altitudes),
         high_tags=any(z >= MARKER_HIGH_Z_THRESHOLD for z in tag_altitudes),
         site_area=bool(site_area),
+        restricted_areas=bool(restricted_areas),
     )
 
     def _adatta():

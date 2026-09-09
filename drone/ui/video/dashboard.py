@@ -38,8 +38,6 @@ class Dashboard:
 
         self._autopilot_command: dict = {}
 
-        self._manual_command: dict = {}
-
         self._state_active = False
 
         self._mission_map: Optional[MissionMapState] = None
@@ -64,6 +62,7 @@ class Dashboard:
         home_index: Optional[int] = None,
         yaw_offset_deg: float = 0.0,
         site_area=(),
+        restricted_areas=(),
         world_tags=None,
     ) -> None:
         if not self.enabled or not waypoints:
@@ -72,6 +71,7 @@ class Dashboard:
             waypoints,
             home_index=home_index,
             site_area=site_area or (),
+            restricted_areas=restricted_areas or (),
             world_tags=world_tags,
         )
         self._map_yaw_offset_deg = float(yaw_offset_deg)
@@ -98,11 +98,6 @@ class Dashboard:
         if self._mission_map is not None:
             self._mission_map.set_autonomy_inactive()
 
-    def set_manual_command(self, command) -> None:
-        if not self.enabled:
-            return
-        self._manual_command = dict(command or {})
-
     def set_pose(self, pose_estimate, fresh: bool = False) -> None:
         if not self.enabled:
             return
@@ -117,6 +112,11 @@ class Dashboard:
             self._drone_yaw_deg = float(yaw) if yaw is not None else 0.0
         except Exception:
             pass
+
+    def set_visible_tags(self, tag_ids) -> None:
+        if not self.enabled or self._mission_map is None:
+            return
+        self._mission_map.set_visible_tags(tag_ids)
 
     def log_alert(self, line: str) -> None:
         if not self.enabled:
@@ -217,7 +217,6 @@ class Dashboard:
             drone_xy=self._drone_xy,
             drone_heading_deg=self._drone_yaw_deg + self._map_yaw_offset_deg,
             drone_pose_fresh=self._drone_pose_fresh,
-            drone_command=self._drone_command(),
             axes=self._tolerance_axes(),
         )
         term_img = panels.text_panel(
@@ -270,10 +269,3 @@ class Dashboard:
             ("Z", mag(cmd.get("z_error_m")), cmd.get("z_tolerance_m"), cmd.get("z_ok"), "m", 2),
             ("Yaw", mag(cmd.get("yaw_error_deg")), cmd.get("yaw_tolerance_deg"), cmd.get("yaw_ok"), "°", 1),
         )
-
-    def _drone_command(self) -> dict:
-        if not self._state_active:
-            return self._manual_command
-        if self._autopilot_command.get("supervision_stop_active", False):
-            return {}
-        return self._autopilot_command

@@ -32,6 +32,11 @@ SITE_AREA_VERTICES_M: tuple[tuple[float, float], ...] = (
 )
 
 
+RESTRICTED_AREAS_RAW: tuple[dict[str, tuple[float, float]], ...] = (
+    {"center_m": (0.3, 0.03), "size_m": (0.4, 0.3)},
+)
+
+
 CAMERA_MATRIX: tuple[
     tuple[float, float, float],
     tuple[float, float, float],

@@ -6,6 +6,7 @@ from pathlib import Path
 from drone.config.measurements import (
     CAMERA_MATRIX,
     DIST_COEFFS,
+    RESTRICTED_AREAS_RAW,
     SITE_AREA_VERTICES_M,
     WORLD_TAGS_RAW,
 )
@@ -14,6 +15,7 @@ from drone.loaders.yolo_models_loader import (
     load_models_registry,
 )
 from drone.ui.appearance import (
+    PROJECT_TITLE,
     VIDEO_WINDOW_TITLE,
     WINDOW_TITLE,
     DashboardConfig,
@@ -25,12 +27,24 @@ PACKAGE_DIR = Path(__file__).resolve().parent.parent
 _MODELS_REGISTRY = load_models_registry(BASE_DIR)
 
 
+def _rectangle_vertices(center_m, size_m) -> tuple[tuple[float, float], ...]:
+    (center_x, center_y), (width, height) = center_m, size_m
+    half_width, half_height = width / 2.0, height / 2.0
+    return (
+        (center_x - half_width, center_y - half_height),
+        (center_x + half_width, center_y - half_height),
+        (center_x + half_width, center_y + half_height),
+        (center_x - half_width, center_y + half_height),
+    )
+
+
 @dataclass(frozen=True)
 class JoystickMapping:
     button_takeoff: int = 0
     button_land: int = 1
     button_detection: int = 2
     button_autonomy: int = 3
+    button_scenario: int = 9
     button_quit: int = 6
 
     axis_lr: int = 0
@@ -44,6 +58,7 @@ class JoystickMapping:
     label_land: str = "Cerchio"
     label_detection: str = "Quadrato"
     label_autonomy: str = "Triangolo"
+    label_scenario: str = "L1"
     label_quit: str = "Options"
 
     label_axis_lr: str = "Stick sinistro orizzontale"
@@ -210,6 +225,7 @@ class AppConfig:
 
     window_title: str = WINDOW_TITLE
     video_window_title: str = VIDEO_WINDOW_TITLE
+    project_title: str = PROJECT_TITLE
 
     frame_from_controller_is_rgb: bool = True
     frame_timeout_sec: float = 2.0
@@ -257,6 +273,12 @@ class AppConfig:
     site_area_vertices_m: tuple[tuple[float, float], ...] = field(
         default_factory=lambda: SITE_AREA_VERTICES_M
     )
+    restricted_areas_vertices_m: tuple[tuple[tuple[float, float], ...], ...] = field(
+        default_factory=lambda: tuple(
+            _rectangle_vertices(area["center_m"], area["size_m"])
+            for area in RESTRICTED_AREAS_RAW
+        )
+    )
 
     joystick: JoystickMapping = field(default_factory=JoystickMapping)
     camera_pose: CameraPoseConfig = field(default_factory=CameraPoseConfig)
@@ -264,9 +286,10 @@ class AppConfig:
     apriltag_autopilot: AprilTagAutopilotConfig = field(default_factory=AprilTagAutopilotConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
-    # Configurazione MQTT
     mqtt_broker_ip: str = "192.168.1.50"
-    
+    mqtt_broker_port: int = 1883
+    mqtt_publish_interval_sec: float = 0.5
+
     def __post_init__(self):
         if self.battery_warning_pct <= self.battery_critical_pct:
             raise ValueError(
