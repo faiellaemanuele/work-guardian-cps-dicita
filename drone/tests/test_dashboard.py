@@ -237,6 +237,45 @@ def test_render_to_image_survives_a_very_short_window():
     assert column.shape == (300, dash.config.panel_width, 3)
 
 
+def _rendered_heights(dash, total_height):
+    from drone.ui.video import panels
+
+    altezze = {}
+    mappa_originale, testo_originale = panels.map_panel, panels.text_panel
+
+    def mappa(config, height, **kwargs):
+        altezze["mappa"] = height
+        return mappa_originale(config, height, **kwargs)
+
+    def testo(config, title, lines, height, **kwargs):
+        altezze["log"] = height
+        return testo_originale(config, title, lines, height, **kwargs)
+
+    panels.map_panel, panels.text_panel = mappa, testo
+    try:
+        colonna = dash._render_to_image(total_height)
+    finally:
+        panels.map_panel, panels.text_panel = mappa_originale, testo_originale
+    assert colonna.shape[0] == total_height
+    return altezze
+
+
+def test_the_logs_take_the_height_the_map_leaves():
+    from drone.ui.video import panels
+
+    dash = _dashboard()
+    altezze = _rendered_heights(dash, 1009)
+    assert altezze["mappa"] == panels.map_panel_height(dash.config)
+    assert altezze["log"] == 1009 - dash.config.gap_px - altezze["mappa"]
+
+
+def test_a_short_window_keeps_the_logs_at_their_minimum_height():
+    dash = _dashboard()
+    altezze = _rendered_heights(dash, 760)
+    assert altezze["log"] == dash.config.log_row_min_height
+    assert altezze["mappa"] == 760 - dash.config.gap_px - dash.config.log_row_min_height
+
+
 def test_set_scenario_name_stores_value():
     dash = _dashboard()
     assert dash._scenario_name is None

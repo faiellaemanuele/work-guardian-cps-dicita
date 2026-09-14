@@ -372,31 +372,31 @@ _ACTION_GROUPS = (
     (
         "VOLO",
         (
-            ("label_takeoff", "decolla"),
-            ("label_land", "atterra"),
+            ("label_takeoff", "Take off"),
+            ("label_land", "Land"),
         ),
     ),
     (
         "SUPERVISIONE",
         (
-            ("label_detection", "attiva e disattiva il riconoscimento"),
-            ("label_autonomy", "attiva e disattiva il volo autonomo"),
+            ("label_detection", "Attiva e disattiva la detection"),
+            ("label_autonomy", "Attiva e disattiva il volo automatico"),
         ),
     ),
     (
         "SESSIONE",
         (
-            ("label_scenario", "quando il drone è a terra, torna alla schermata precedente"),
-            ("label_quit", "chiude la sessione"),
+            ("label_scenario", "Quando il drone è a terra, torna alla schermata precedente"),
+            ("label_quit", "Chiude la sessione"),
         ),
     ),
 )
 
 _AXIS_DETAILS = (
-    ("label_axis_lr", "L", "orizzontale", "trasla a sinistra e a destra"),
-    ("label_axis_fb", "L", "verticale", "avanza e indietreggia"),
-    ("label_axis_ud", "R", "verticale", "sale e scende"),
-    ("label_axis_yaw", "R", "orizzontale", "ruota su sé stesso"),
+    ("label_axis_lr", "L", "orizzontale", "Trasla a sinistra e a destra"),
+    ("label_axis_fb", "L", "verticale", "Avanza e indietreggia"),
+    ("label_axis_yaw", "R", "orizzontale", "Ruota su sé stesso"),
+    ("label_axis_ud", "R", "verticale", "Sale e scende"),
 )
 
 

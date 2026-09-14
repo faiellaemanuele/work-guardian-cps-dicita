@@ -6,6 +6,8 @@ import numpy as np
 import pygame
 from PIL import Image, ImageDraw
 
+from drone.ui.shapes import glow_box
+
 
 _SW_MAXIMIZE = 3
 _SW_RESTORE = 9
@@ -107,53 +109,64 @@ def flash_button_press(screen, base_surface, rect,
     pygame.time.wait(int(duration_sec * 1000))
 
 
-_BG_GRADIENT_CACHE: dict = {}
+NAVY_CENTER = (6, 38, 68)
+NAVY_EDGE = (2, 16, 32)
+GRID_LINE = (6, 33, 58)
+GRID_CROSS = (16, 68, 112)
+
+CYAN_BRIGHT = (16, 226, 250)
+CYAN_TEXT = (128, 232, 252)
+CYAN_FILL = (3, 201, 255)
+CYAN_INK = (4, 36, 60)
+WHITE = (248, 251, 252)
+LINE_DIM = (4, 68, 116)
+YELLOW = (250, 222, 10)
+FOOTER_RULE = (196, 206, 216)
+
+_HOVER_BUTTON_FILL = (3, 20, 40)
+
+_BACKGROUND_CACHE: dict = {}
 
 
-def bg_gradient(w: int, h: int) -> "Image.Image":
-    key = (w, h)
-    img = _BG_GRADIENT_CACHE.get(key)
+def grid_background(w: int, h: int, step: int, arm: int, *,
+                    line=GRID_LINE, cross=GRID_CROSS) -> "Image.Image":
+    key = (w, h, step, arm, line, cross)
+    img = _BACKGROUND_CACHE.get(key)
     if img is None:
         yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-        cx, cy = w * 0.5, -h * 0.28
-        rx, ry = w * 0.62, h * 1.0
-        d = np.sqrt(((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2)
+        d = np.sqrt(((xx - w * 0.5) / (w * 0.75)) ** 2 + ((yy - h * 0.35) / (h * 0.95)) ** 2)
         d = np.clip(d, 0.0, 1.0)[..., None]
-        inner = np.array([26, 31, 43], np.float32)
-        outer = np.array([9, 10, 13], np.float32)
-        arr = inner * (1.0 - d) + outer * d
+        centro = np.array(NAVY_CENTER, np.float32)
+        bordo = np.array(NAVY_EDGE, np.float32)
+        arr = centro * (1.0 - d) + bordo * d
         img = Image.fromarray(arr.astype("uint8"), "RGB")
-        _BG_GRADIENT_CACHE[key] = img
+        if step > 0:
+            draw = ImageDraw.Draw(img)
+            for x in range(step // 2, w, step):
+                draw.line((x, 0, x, h), fill=line)
+            for y in range(step // 2, h, step):
+                draw.line((0, y, w, y), fill=line)
+            spessore = max(1, arm // 6)
+            for x in range(step // 2, w, step):
+                for y in range(step // 2, h, step):
+                    draw.line((x - arm, y, x + arm, y), fill=cross, width=spessore)
+                    draw.line((x, y - arm, x, y + arm), fill=cross, width=spessore)
+        _BACKGROUND_CACHE.clear()
+        _BACKGROUND_CACHE[key] = img
     return img.copy()
 
 
-def gradient_text(text, font, c_left, c_right) -> "Image.Image":
-    w = max(1, int(font.getlength(text)) + 4)
-    asc, desc = font.getmetrics()
-    h = asc + desc
-    mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).text((2, 0), text, fill=255, font=font)
-    tx = np.linspace(0.0, 1.0, w, dtype=np.float32)[:, None]
-    cl = np.array(c_left, np.float32)
-    cr = np.array(c_right, np.float32)
-    row = cl * (1.0 - tx) + cr * tx
-    grad = np.repeat(row[None, :, :], h, axis=0)
-    out = Image.fromarray(grad.astype("uint8"), "RGB").convert("RGBA")
-    out.putalpha(mask)
-    return out
-
-
-def corner_glow(w: int, h: int, color, radius: int) -> "Image.Image":
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    max_r = max(w, h) * 0.95
-    d = np.sqrt(xx ** 2 + (yy / 1.1) ** 2) / max_r
-    a = np.clip(1.0 - d, 0.0, 1.0) ** 1.2 * 60.0
-    mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
-    a = a * (np.asarray(mask, np.float32) / 255.0)
-    arr = np.zeros((h, w, 4), np.float32)
-    arr[..., 0], arr[..., 1], arr[..., 2], arr[..., 3] = color[0], color[1], color[2], a
-    return Image.fromarray(arr.astype("uint8"), "RGBA")
+def draw_hover_button(img, box, label, font, *, unit: float, hover: bool = False) -> None:
+    glow_box(
+        img, box, radius=10 * unit, edge=CYAN_BRIGHT, width=(2.2 if hover else 1.8) * unit,
+        fill=CYAN_FILL if hover else _HOVER_BUTTON_FILL,
+        glow=7 * unit if hover else 0, glow_alpha=150 if hover else 0,
+    )
+    x0, y0, x1, y1 = box
+    ImageDraw.Draw(img).text(
+        ((x0 + x1) / 2, (y0 + y1) / 2), label, font=font,
+        fill=CYAN_INK if hover else WHITE, anchor="mm",
+    )
 
 
 def fit_text(text, font, max_w) -> str:

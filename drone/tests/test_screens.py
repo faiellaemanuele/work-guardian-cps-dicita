@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from drone.config import APP_CONFIG
+from drone.ui import fonts
 from drone.ui.setup import screens
 from drone.ui.setup.screens import (
     GO_BACK,
@@ -26,7 +27,18 @@ def test_the_models_screen_is_gone():
 
 def test_the_screen_is_about_the_scenario():
     assert "scenario" in WAYPOINT_TITLE.lower()
-    assert "controlli" in screens.WAYPOINT_SUBTITLE.lower()
+    sottotitolo = screens.WAYPOINT_SUBTITLE.lower()
+    assert "percorso" in sottotitolo
+    assert "yolo" in sottotitolo
+
+
+def test_the_subtitle_fits_the_window_at_every_size():
+    for larghezza, altezza in _MISURE_FINESTRA:
+        screens._apply_layout_scale(larghezza, altezza)
+        font = fonts.sans(screens._scale(screens._SUBTITLE_PX))
+        assert font.getlength(screens.WAYPOINT_SUBTITLE) <= larghezza * screens._SUPERSAMPLE, (
+            f"{larghezza}x{altezza}"
+        )
 
 
 def test_the_tile_leaves_room_for_the_model_chips():
@@ -57,6 +69,27 @@ def test_the_screen_no_longer_reads_the_keyboard():
     sorgente = pathlib.Path(screens.__file__).read_text(encoding="utf-8")
     assert "KEYDOWN" not in sorgente
     assert "MOUSEBUTTONDOWN" in sorgente
+
+
+class _Percorso:
+    def __init__(self, waypoint, soste, durata):
+        self.waypoints = tuple(range(waypoint))
+        self.supervision_waypoints = soste
+        self.supervision_stop_sec = durata
+
+
+def test_the_summary_counts_waypoints_and_stops():
+    riassunto = screens._path_summary(_Percorso(10, (1, 5, 6, 10), 8.0))
+    assert riassunto == ("10 waypoint", "4 soste da 8 s")
+
+
+def test_the_summary_uses_the_singular_and_the_decimal_comma():
+    riassunto = screens._path_summary(_Percorso(3, (2,), 6.5))
+    assert riassunto == ("3 waypoint", "1 sosta da 6,5 s")
+
+
+def test_without_stops_the_summary_has_only_the_waypoints():
+    assert screens._path_summary(_Percorso(5, None, None)) == ("5 waypoint", None)
 
 
 _MISURE_FINESTRA = (
@@ -93,15 +126,36 @@ def test_the_footer_buttons_stay_inside_the_window_and_below_the_tiles():
         conferma, annulla, indietro = screens.footer_rects(larghezza, altezza)
         assert conferma.right <= larghezza
         assert conferma.bottom <= altezza
-        assert indietro.x > 0
-        assert indietro.right <= annulla.x
-        assert annulla.right <= conferma.x
+        assert annulla.x > 0
+        assert annulla.right <= indietro.x
+        assert indietro.right <= conferma.x
 
         tile_h = _waypoint_tile_height([_DESCRIZIONE_LUNGA], larghezza, altezza)
         rects = screens._compute_tile_rects(
             2, larghezza, altezza, cols=screens._WAYPOINT_COLS, tile_h=tile_h, gap=18,
         )
         assert rects[-1].bottom <= indietro.y, f"{larghezza}x{altezza}"
+
+
+def test_the_tiles_are_centered_between_the_header_and_the_footer():
+    descrizioni = [_DESCRIZIONE_LUNGA, "Descrizione breve."]
+    for larghezza, altezza in _MISURE_FINESTRA:
+        tile_h = _waypoint_tile_height(descrizioni, larghezza, altezza)
+        rects = screens._compute_tile_rects(
+            len(descrizioni), larghezza, altezza,
+            cols=screens._WAYPOINT_COLS, tile_h=tile_h, gap=18,
+        )
+        k = screens._LAYOUT_SCALE
+        sopra = rects[0].top - int(screens._HEADER_BAND_H * k)
+        sotto = altezza - int(screens._FOOTER_BAND_H * k) - rects[-1].bottom
+        assert abs(sopra - sotto) <= 1, f"{larghezza}x{altezza}: {sopra} sopra, {sotto} sotto"
+
+
+def test_cancel_sits_on_the_left_and_the_other_two_on_the_right():
+    conferma, annulla, indietro = screens.footer_rects(1920, 1080)
+    assert annulla.centerx < 1920 / 2
+    assert indietro.centerx > 1920 / 2
+    assert conferma.centerx > indietro.centerx
 
 
 def test_the_tile_grows_with_a_longer_description():

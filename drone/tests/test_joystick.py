@@ -123,9 +123,9 @@ def test_every_label_leaves_a_visible_gap_before_its_action():
 
 def test_actions_are_verbs_like_the_onboard_functions():
     testo = format_joystick_help()
-    for verbo in ("decolla", "atterra", "attiva e disattiva", "chiude la sessione",
+    for verbo in ("take off", "land", "attiva e disattiva", "chiude la sessione",
                   "trasla", "avanza", "sale e scende", "ruota"):
-        assert verbo in testo
+        assert verbo in testo.lower()
     assert "Movimento" in testo
 
 

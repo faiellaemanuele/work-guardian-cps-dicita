@@ -99,6 +99,22 @@ def test_project_title_is_centered_at_the_top():
     assert int(righe.max()) < overlay.project_title_bottom_edge()
 
 
+def test_project_title_is_blue_like_the_dashboard_background():
+    from drone.ui.video import panels
+
+    assert overlay._TITLE_COLOR == panels.BG
+    f = np.full((120, 960, 3), 255, dtype=np.uint8)
+    draw_project_title(f, "WORK GUARDIAN")
+    blu = np.array(overlay._TITLE_COLOR[::-1], dtype=int)
+    vicini = np.abs(f.astype(int) - blu).sum(axis=2) <= 12
+    assert int(vicini.sum()) > 200
+
+
+def test_the_watch_panel_says_connected_like_the_drone_panel():
+    assert overlay._WATCH_LABELS == ("Connesso",)
+    assert overlay._WATCH_LABELS[0] in overlay._PANEL_LABELS
+
+
 def test_empty_project_title_is_noop():
     f = _frame()
     draw_project_title(f, "")

@@ -5,6 +5,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from PIL import Image
+
 from drone.ui import fonts
 from drone.ui.setup import effects
 
@@ -70,31 +72,32 @@ def test_wrap_text_tiene_la_parola_piu_lunga_della_riga():
 
 
 def test_lo_sfondo_ha_la_misura_chiesta_ed_e_una_copia():
-    primo = effects.bg_gradient(120, 80)
-    secondo = effects.bg_gradient(120, 80)
+    primo = effects.grid_background(120, 80, 20, 3)
+    secondo = effects.grid_background(120, 80, 20, 3)
     assert primo.size == (120, 80)
     assert primo is not secondo
     assert primo.tobytes() == secondo.tobytes()
 
 
-def test_lo_sfondo_e_piu_chiaro_in_alto():
-    img = effects.bg_gradient(120, 80)
-    assert sum(img.getpixel((60, 0))) > sum(img.getpixel((60, 79)))
+def test_lo_sfondo_e_piu_chiaro_al_centro_che_negli_angoli():
+    img = effects.grid_background(120, 80, 0, 0)
+    assert sum(img.getpixel((60, 28))) > sum(img.getpixel((0, 79)))
 
 
-def test_il_testo_sfumato_e_alto_quanto_il_font():
-    font = fonts.sans_bold(28)
-    img = effects.gradient_text("Tello", font, (255, 0, 0), (0, 0, 255))
-    asc, desc = font.getmetrics()
-    assert img.mode == "RGBA"
-    assert img.size[1] == asc + desc
+def test_le_crocette_della_griglia_si_staccano_dal_fondo():
+    liscio = effects.grid_background(120, 80, 0, 0)
+    griglia = effects.grid_background(120, 80, 40, 4)
+    assert griglia.getpixel((20, 20)) != liscio.getpixel((20, 20))
 
 
-def test_il_bagliore_d_angolo_sfuma_allontanandosi():
-    img = effects.corner_glow(60, 60, (120, 180, 255), radius=8)
-    assert img.mode == "RGBA"
-    assert img.size == (60, 60)
-    assert img.getpixel((12, 12))[3] > img.getpixel((30, 5))[3] > img.getpixel((30, 55))[3]
+def test_il_bottone_resta_scuro_e_si_accende_d_azzurro_sotto_il_cursore():
+    box = (60, 30, 240, 90)
+    spento = Image.new("RGB", (300, 120), (0, 0, 0))
+    effects.draw_hover_button(spento, box, "Conferma", fonts.sans_bold(20), unit=1.0)
+    acceso = Image.new("RGB", (300, 120), (0, 0, 0))
+    effects.draw_hover_button(acceso, box, "Conferma", fonts.sans_bold(20), unit=1.0, hover=True)
+    assert sum(spento.getpixel((80, 45))) < 100
+    assert acceso.getpixel((80, 45)) == effects.CYAN_FILL
 
 
 def test_la_dissolvenza_disegna_subito_la_prima_schermata():

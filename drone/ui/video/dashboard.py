@@ -201,8 +201,12 @@ class Dashboard:
         total_height = int(total_height)
         pw = int(getattr(self.config, "panel_width", 940))
         gap = max(0, int(getattr(self.config, "gap_px", 6)))
-        log_h = max(1, int(getattr(self.config, "log_row_height", 262)))
-        map_h = total_height - gap - log_h
+        log_min_h = max(1, int(getattr(self.config, "log_row_min_height", 200)))
+        map_h = panels.map_panel_height(self.config)
+        log_h = total_height - gap - map_h
+        if log_h < log_min_h:
+            log_h = log_min_h
+            map_h = total_height - gap - log_h
         if map_h < 120:
             map_h = max(1, int(total_height * 0.5))
             log_h = max(1, total_height - gap - map_h)
@@ -224,12 +228,14 @@ class Dashboard:
             getattr(self.config, "terminal_title", "Terminale drone"),
             list(self._terminal_lines), log_h, engaged=self._autonomy_engaged,
             line_color=panels.terminal_line_color, width=left_w,
+            inset=panels.LOG_INSET_LEFT,
         )
         alerts_img = panels.text_panel(
             self.config,
             getattr(self.config, "alerts_title", "Log degli alert"),
             list(self._alert_lines), log_h, engaged=self._autonomy_engaged,
             line_color=panels.alert_line_color, width=right_w,
+            inset=panels.LOG_INSET_RIGHT,
         )
 
         bg = np.array(panels.BG[::-1], dtype=np.uint8)

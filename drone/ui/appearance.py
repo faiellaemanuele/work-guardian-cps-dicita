@@ -21,7 +21,7 @@ class DashboardConfig:
 
     panel_width: int = 940
 
-    log_row_height: int = 262
+    log_row_min_height: int = 200
 
     gap_px: int = 6
 

@@ -3,23 +3,30 @@ from __future__ import annotations
 from typing import Optional
 
 import pygame
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 from drone.config import APP_CONFIG
 from drone.hardware.joystick import read_setup_action
 from drone.ui import fonts
 from drone.ui.setup.effects import (
-    bg_gradient,
-    corner_glow,
+    CYAN_BRIGHT,
+    CYAN_FILL,
+    CYAN_INK,
+    CYAN_TEXT,
     CrossfadeBlitter,
+    FOOTER_RULE,
+    LINE_DIM,
+    WHITE,
+    draw_hover_button,
     fade_screen,
     fit_text,
     flash_button_press,
     focus_window,
-    gradient_text,
+    grid_background,
     maximize_window,
     wrap_text,
 )
+from drone.ui.shapes import corner_brackets, glow_box, paint_supersampled
 
 
 _SUPERSAMPLE = 2
@@ -39,6 +46,10 @@ def _px(value: float) -> int:
     return int(round(value * _SUPERSAMPLE))
 
 
+def _unit() -> float:
+    return _SUPERSAMPLE * _LAYOUT_SCALE
+
+
 def _base_layout_scale(width: int, height: int) -> float:
     return min(
         1.25,
@@ -52,15 +63,17 @@ def _apply_layout_scale(width: int, height: int) -> float:
     return _LAYOUT_SCALE
 
 
-_HEADER_BAND_H = 150
+_HEADER_BAND_H = 140
 _FOOTER_BAND_H = 130
 
-_ALERT_ZONE_H = 100
+
+def _tile_margin_x(width: int) -> int:
+    return max(24, int(width * 0.036))
 
 
 def _compute_tile_rects(n, width, height, *, cols, tile_h, gap=20):
     rows = (n + cols - 1) // cols
-    margin_x = max(40, int(width * 0.06))
+    margin_x = _tile_margin_x(width)
     header_h = int(_HEADER_BAND_H * _LAYOUT_SCALE)
     footer_h = int(_FOOTER_BAND_H * _LAYOUT_SCALE)
     avail_h = height - header_h - footer_h
@@ -69,9 +82,7 @@ def _compute_tile_rects(n, width, height, *, cols, tile_h, gap=20):
     if grid_h > avail_h:
         tile_h = max(72, int((avail_h - gap * (rows - 1)) / rows))
         grid_h = rows * tile_h + gap * (rows - 1)
-    alert_zone = int(_ALERT_ZONE_H * _LAYOUT_SCALE)
-    reserve = alert_zone if (avail_h - grid_h) >= alert_zone else 0
-    top = header_h + max(0, (avail_h - reserve - grid_h) // 2)
+    top = header_h + max(0, (avail_h - grid_h) // 2)
 
     grid_w = width - 2 * margin_x
     tile_w = (grid_w - gap * (cols - 1)) / cols
@@ -87,68 +98,71 @@ def _compute_tile_rects(n, width, height, *, cols, tile_h, gap=20):
 def footer_rects(width: int, height: int):
     k = _base_layout_scale(width, height)
     larghezza = int(round(250 * k))
-    altezza = int(round(54 * k))
-    margine = int(round(32 * k))
+    altezza = int(round(60 * k))
+    margine = int(round(48 * k))
     stacco = int(round(20 * k))
     y = height - altezza - int(round(28 * k))
     confirm_rect = pygame.Rect(width - margine - larghezza, y, larghezza, altezza)
-    cancel_rect = pygame.Rect(confirm_rect.x - stacco - larghezza, y, larghezza, altezza)
-    back_rect = pygame.Rect(cancel_rect.x - stacco - larghezza, y, larghezza, altezza)
+    back_rect = pygame.Rect(confirm_rect.x - stacco - larghezza, y, larghezza, altezza)
+    cancel_rect = pygame.Rect(margine, y, larghezza, altezza)
     return confirm_rect, cancel_rect, back_rect
 
 
-def _draw_dpad_glyph(draw, cx, cy, r):
-    S = _scale
+_DPAD_FILL = (6, 22, 44)
+_CROSS_FILL = (4, 16, 40)
+
+
+def _paint_icon(img, cx, cy, reach, paint) -> None:
+    paint_supersampled(img, (cx - reach, cy - reach, cx + reach, cy + reach), (cx, cy), paint)
+
+
+def _draw_dpad_glyph(draw, cx, cy, r, u):
     draw.rounded_rectangle(
-        (cx - r, cy - r, cx + r, cy + r), radius=S(6),
-        fill=(40, 45, 57), outline=(72, 79, 96), width=S(1),
+        (cx - r, cy - r, cx + r, cy + r), radius=7 * u,
+        fill=_DPAD_FILL, outline=CYAN_BRIGHT, width=max(1, round(1.6 * u)),
     )
-    a = r * 0.55
-    punta = (206, 212, 224)
-    draw.line((cx, cy - a, cx, cy + a), fill=punta, width=S(2))
-    for sy in (-1, 1):
-        draw.polygon(
-            [
-                (cx, cy + sy * a),
-                (cx - S(5), cy + sy * (a - S(6))),
-                (cx + S(5), cy + sy * (a - S(6))),
-            ],
-            fill=punta,
+    braccio = r * 0.34
+    lato = r * 0.2
+    for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        px, py = cx + dx * braccio, cy + dy * braccio
+        draw.rounded_rectangle(
+            (px - lato, py - lato, px + lato, py + lato), radius=2 * u, fill=WHITE,
         )
+    centro = r * 0.13
+    draw.rectangle((cx - centro, cy - centro, cx + centro, cy + centro), fill=WHITE)
 
 
-def _draw_cross_glyph(draw, cx, cy, r):
-    S = _scale
+def _draw_cross_glyph(draw, cx, cy, r, u):
     draw.ellipse(
         (cx - r, cy - r, cx + r, cy + r),
-        fill=(40, 45, 57), outline=(72, 79, 96), width=S(1),
+        fill=_CROSS_FILL, outline=CYAN_BRIGHT, width=max(1, round(2.6 * u)),
     )
-    k = r * 0.44
-    draw.line((cx - k, cy - k, cx + k, cy + k), fill=(124, 178, 232), width=S(3))
-    draw.line((cx - k, cy + k, cx + k, cy - k), fill=(124, 178, 232), width=S(3))
+    k = r * 0.42
+    draw.line((cx - k, cy - k, cx + k, cy + k), fill=CYAN_TEXT, width=max(1, round(3 * u)))
+    draw.line((cx - k, cy + k, cx + k, cy - k), fill=CYAN_TEXT, width=max(1, round(3 * u)))
 
 
-def _draw_joystick_hints(draw, hint_groups, *, f_hint, cancel_rect, margin_x):
-    S = _scale
-    btn_cy = _px(cancel_rect.y + cancel_rect.height / 2)
-    x = _px(margin_x)
-    r = S(17)
-
+def _draw_joystick_hints(img, hint_groups, *, f_hint, start_x, cy):
+    u = _unit()
+    r = _scale(24)
+    x = start_x
+    draw = ImageDraw.Draw(img)
     for gi, (kind, label) in enumerate(hint_groups):
         if gi > 0:
-            x += S(16)
-            draw.text((x, btn_cy), "·", font=f_hint, fill=(80, 86, 100), anchor="lm")
-            x += S(20)
-        if kind == "cross":
-            _draw_cross_glyph(draw, x + r, btn_cy, r)
-        else:
-            _draw_dpad_glyph(draw, x + r, btn_cy, r)
-        x += 2 * r + S(10)
-        draw.text((x, btn_cy), label, font=f_hint, fill=(178, 184, 198), anchor="lm")
+            x += _scale(22)
+            draw.text((x, cy), "•", font=f_hint, fill=WHITE, anchor="mm")
+            x += _scale(22)
+        glyph = _draw_cross_glyph if kind == "cross" else _draw_dpad_glyph
+        _paint_icon(
+            img, x + r, cy, r + _scale(3),
+            lambda d, ax, ay, s, glyph=glyph: glyph(d, ax, ay, r * s, u * s),
+        )
+        x += 2 * r + _scale(18)
+        draw.text((x, cy), label, font=f_hint, fill=WHITE, anchor="lm")
         x += int(f_hint.getlength(label))
 
 
-_ALERT_DOT = {"info": (96, 124, 172), "warn": (212, 156, 66)}
+_ALERT_DOT = {"info": (80, 208, 252), "warn": (252, 190, 16)}
 
 
 def _draw_alert(draw, W, height, grid_bottom, kind, text, font):
@@ -165,138 +179,66 @@ def _draw_alert(draw, W, height, grid_bottom, kind, text, font):
     y0 = cy - h // 2
     draw.rounded_rectangle(
         [x0, y0, x0 + w, y0 + h], radius=S(12),
-        fill=(28, 32, 42), outline=(54, 60, 76), width=S(1),
+        fill=(4, 30, 54), outline=(4, 112, 176), width=S(1),
     )
     dx = x0 + padx
     draw.ellipse([dx, cy - dot_d // 2, dx + dot_d, cy + dot_d // 2], fill=_ALERT_DOT[kind])
-    draw.text((dx + dot_d + gap, cy), text, font=font, fill=(206, 212, 224), anchor="lm")
-
-
-def _draw_screen_backdrop(img, W, H, rects, focus, colors, enabled):
-    SS = _SUPERSAMPLE
-    S = _scale
-
-    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(shadow)
-    for r in rects:
-        sdraw.rounded_rectangle(
-            [r.x * SS, r.y * SS + S(10), r.right * SS, r.bottom * SS + S(10)],
-            radius=S(16), fill=(0, 0, 0, 150),
-        )
-    img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(S(10))))
-
-    if 0 <= focus < len(rects):
-        r = rects[focus]
-        c = colors[focus]
-        glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        ImageDraw.Draw(glow).rounded_rectangle(
-            [r.x * SS - S(4), r.y * SS - S(4), r.right * SS + S(4), r.bottom * SS + S(4)],
-            radius=S(18), fill=(c[0], c[1], c[2], 150 if enabled[focus] else 70),
-        )
-        img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(S(16))))
-
-
-def _draw_screen_heading(img, draw, W, title, subtitle, f_title, f_sub):
-    S = _scale
-    gt = gradient_text(title, f_title, (255, 255, 255), (174, 191, 224))
-    img.alpha_composite(gt, (W // 2 - gt.width // 2, S(52) - gt.height // 2))
-    draw.text(
-        (W // 2, S(102)), subtitle,
-        font=f_sub, fill=(176, 182, 194), anchor="mm",
-    )
-
-
-def _draw_tile_frame(img, draw, r, color, on, is_focus):
-    SS = _SUPERSAMPLE
-    S = _scale
-    x0, y0, x1, y1 = r.x * SS, r.y * SS, r.right * SS, r.bottom * SS
-
-    if on:
-        bg = (min(40, 23 + color[0] // 12), min(44, 26 + color[1] // 12),
-              min(52, 34 + color[2] // 12), 255)
-    else:
-        bg = (23, 26, 34, 255)
-    draw.rounded_rectangle([x0, y0, x1, y1], radius=S(14), fill=bg)
-    if on:
-        img.alpha_composite(
-            corner_glow(r.width * SS, r.height * SS, color, S(14)), (x0, y0)
-        )
-    border_col = color if (on or is_focus) else (40, 44, 54)
-    draw.rounded_rectangle(
-        [x0, y0, x1, y1], radius=S(14), outline=border_col,
-        width=S(2) if (on or is_focus) else S(1),
-    )
-    return x0, y0, x1, y1
-
-
-def _draw_tile_badge(draw, number, bx0, by0, bcy, bsz, color, f_badge):
-    S = _scale
-    badge_bg = (color[0] // 6 + 8, color[1] // 6 + 8, color[2] // 6 + 8, 255)
-    draw.rounded_rectangle(
-        [bx0, by0, bx0 + bsz, by0 + bsz], radius=S(11),
-        fill=badge_bg, outline=color, width=S(1),
-    )
-    num = str(number)
-    ax, ay = bx0 + bsz // 2, bcy
-    nl, nt, nr, nb = draw.textbbox((ax, ay), num, font=f_badge, anchor="mm")
-    draw.text(
-        (2 * ax - (nl + nr) / 2, 2 * ay - (nt + nb) / 2), num,
-        font=f_badge, fill=color, anchor="mm",
-    )
-
-
-def _draw_tile_toggle(draw, x1, bcy, pad, on, color):
-    S = _scale
-    tw, th = S(60), S(34)
-    tgx1 = x1 - pad
-    tgx0 = tgx1 - tw
-    tgy0 = bcy - th // 2
-    draw.rounded_rectangle(
-        [tgx0, tgy0, tgx1, tgy0 + th], radius=th // 2,
-        fill=color if on else (52, 57, 68),
-    )
-    knob_r = th // 2 - S(3)
-    knob_cx = tgx1 - knob_r - S(3) if on else tgx0 + knob_r + S(3)
-    knob_col = (255, 255, 255) if on else (150, 155, 165)
-    draw.ellipse([knob_cx - knob_r, bcy - knob_r, knob_cx + knob_r, bcy + knob_r], fill=knob_col)
+    draw.text((dx + dot_d + gap, cy), text, font=font, fill=WHITE, anchor="lm")
 
 
 _WAYPOINT_COLS = 1
 
+_TILE_TEXT_X = 169
+_TILE_NAME_Y = 56
+_TILE_DESC_Y = 112
+_TILE_DESC_STEP = 42
+_TILE_META_GAP = 56
+_TILE_DIVIDER_GAP = 32
+_TILE_MODELS_GAP = 42
+_TILE_BOTTOM_GAP = 46
+
+_TILE_DESC_PX = 30
+_SUBTITLE_PX = 26
+
+_TILE_FILL = (3, 31, 55)
+_TILE_FILL_ON = (4, 36, 62)
+_TILE_EDGE = (4, 108, 172)
+_TILE_EDGE_ON = (8, 214, 246)
+_BADGE_FILL = (3, 30, 58)
+_META_ICON = (80, 208, 252)
+_CHIP_FILL = (3, 39, 69)
+_CHIP_FILL_ON = (3, 45, 75)
+_CHIP_EDGE = (8, 132, 196)
+_CHIP_EDGE_ON = (4, 236, 252)
+
+
+def _tile_offsets(desc_lines: int) -> dict:
+    meta = _TILE_DESC_Y + _TILE_DESC_STEP * (max(1, desc_lines) - 1) + _TILE_META_GAP
+    divider = meta + _TILE_DIVIDER_GAP
+    models = divider + _TILE_MODELS_GAP
+    return {"meta": meta, "divider": divider, "models": models, "bottom": models + _TILE_BOTTOM_GAP}
+
 
 def _waypoint_tile_height(descriptions, width, height=_REFERENCE_HEIGHT) -> int:
     _apply_layout_scale(width, height)
-    S = _scale
     SS = _SUPERSAMPLE
-    margin_x = max(40, int(width * 0.06))
-    tile_w = width - 2 * margin_x
-
-    text_max_w = tile_w * SS - 2 * S(18) - S(100) - S(140)
-    f_name = fonts.sans_bold(S(34))
-    f_desc = fonts.sans(S(24))
-    name_lh = sum(f_name.getmetrics())
-    desc_lh = sum(f_desc.getmetrics())
+    tile_w = width - 2 * _tile_margin_x(width)
+    text_max_w = tile_w * SS - 2 * _scale(_TILE_TEXT_X)
+    f_desc = fonts.sans(_scale(_TILE_DESC_PX))
 
     max_lines = 1
     for desc in descriptions:
         max_lines = max(max_lines, len(wrap_text(desc, f_desc, text_max_w, 100)))
 
-    needed_ss = 2 * S(16) + name_lh + S(6) + max_lines * desc_lh + S(44)
-    return (needed_ss + SS - 1) // SS + 4
-
-
-_WAYPOINT_PALETTE = (
-    (255, 122, 69),
-    (255, 199, 0),
-    (124, 230, 70),
-    (255, 86, 156),
-    (60, 200, 255),
-    (191, 124, 255),
-)
+    needed_ss = _scale(_tile_offsets(max_lines)["bottom"])
+    return (needed_ss + SS - 1) // SS + 2
 
 
 WAYPOINT_TITLE = "Scelta dello scenario"
-WAYPOINT_SUBTITLE = "Il percorso che esegue il drone, i controlli delle soste di supervisione e i modelli di detection che si caricano"
+WAYPOINT_SUBTITLE = (
+    "La scelta dello scenario comporta la definizione del percorso, comprese le soste "
+    "di supervisione, e i modelli di detection YOLO che verranno utilizzati"
+)
 WAYPOINT_MODELS_LABEL = "MODELLI"
 
 GO_BACK = object()
@@ -306,114 +248,213 @@ def _button_label(testo: str, etichetta: str) -> str:
     return f"{testo} ({etichetta})"
 
 
-def _draw_tile_models(draw, x, y, models, color, on):
-    S = _scale
-    f_label = fonts.sans_bold(S(15))
-    f_chip = fonts.sans_bold(S(19))
-    draw.text(
-        (x, y), WAYPOINT_MODELS_LABEL, font=f_label,
-        fill=(140, 146, 160) if on else (110, 115, 128), anchor="lm",
+def _path_summary(path) -> tuple[str, Optional[str]]:
+    waypoint = f"{len(getattr(path, 'waypoints', None) or ())} waypoint"
+    soste = len(getattr(path, "supervision_waypoints", None) or ())
+    durata = getattr(path, "supervision_stop_sec", None)
+    if not soste or durata is None:
+        return waypoint, None
+    parola = "sosta" if soste == 1 else "soste"
+    secondi = f"{float(durata):g}".replace(".", ",")
+    return waypoint, f"{soste} {parola} da {secondi} s"
+
+
+def _draw_pin_icon(draw, cx, cy, size, color, hole):
+    r = size * 0.36
+    hy = cy - size * 0.13
+    draw.ellipse((cx - r, hy - r, cx + r, hy + r), fill=color)
+    draw.polygon(
+        [(cx - r * 0.88, hy + r * 0.45), (cx + r * 0.88, hy + r * 0.45), (cx, cy + size * 0.5)],
+        fill=color,
     )
-    cx = x + int(f_label.getlength(WAYPOINT_MODELS_LABEL)) + S(14)
+    foro = r * 0.42
+    draw.ellipse((cx - foro, hy - foro, cx + foro, hy + foro), fill=hole)
+
+
+def _draw_stopwatch_icon(draw, cx, cy, size, color, u):
+    w = max(1, round(2.4 * u))
+    r = size * 0.4
+    ccy = cy + size * 0.07
+    draw.ellipse((cx - r, ccy - r, cx + r, ccy + r), outline=color, width=w)
+    draw.line((cx, ccy - r - size * 0.1, cx, ccy - r), fill=color, width=w)
+    draw.line((cx - size * 0.13, ccy - r - size * 0.12, cx + size * 0.13, ccy - r - size * 0.12),
+              fill=color, width=w)
+    draw.line((cx, ccy, cx + r * 0.42, ccy - r * 0.45), fill=color, width=w)
+
+
+def _draw_ring(draw, cx, cy, r, u):
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=CYAN_BRIGHT, width=max(1, round(2.6 * u)))
+
+
+def _draw_check(draw, cx, cy, r, u):
+    _draw_ring(draw, cx, cy, r, u)
+    ri = r - 6 * u
+    draw.ellipse((cx - ri, cy - ri, cx + ri, cy + ri), fill=CYAN_FILL)
+    w = max(1, round(4.6 * u))
+    draw.line((cx - ri * 0.45, cy + ri * 0.02, cx - ri * 0.1, cy + ri * 0.38),
+              fill=CYAN_INK, width=w, joint="curve")
+    draw.line((cx - ri * 0.1, cy + ri * 0.38, cx + ri * 0.5, cy - ri * 0.36),
+              fill=CYAN_INK, width=w, joint="curve")
+
+
+def _draw_tile_badge(img, number, bx0, bcy, half, f_badge):
+    u = _unit()
+    radius = _scale(12)
+    _paint_icon(
+        img, bx0 + half, bcy, half + _scale(3),
+        lambda d, ax, ay, s: d.rounded_rectangle(
+            (ax - half * s, ay - half * s, ax + half * s, ay + half * s), radius=radius * s,
+            fill=_BADGE_FILL, outline=CYAN_BRIGHT, width=max(1, round(2.6 * u * s)),
+        ),
+    )
+    draw = ImageDraw.Draw(img)
+    num = str(number)
+    ax, ay = bx0 + half, bcy
+    nl, nt, nr, nb = draw.textbbox((ax, ay), num, font=f_badge, anchor="mm")
+    draw.text(
+        (2 * ax - (nl + nr) / 2, 2 * ay - (nt + nb) / 2), num,
+        font=f_badge, fill=CYAN_BRIGHT, anchor="mm",
+    )
+
+
+def _draw_tile_summary(img, x, cy, summary, on, fonts_map):
+    u = _unit()
+    waypoint, soste = summary
+    font = fonts_map["meta"]
+    hole = _TILE_FILL_ON if on else _TILE_FILL
+    pin = _scale(33)
+    _paint_icon(
+        img, x + _scale(14), cy, pin * 0.62,
+        lambda d, ax, ay, s: _draw_pin_icon(d, ax, ay, pin * s, _META_ICON, hole),
+    )
+    draw = ImageDraw.Draw(img)
+    tx = x + _scale(52)
+    draw.text((tx, cy), waypoint, font=font, fill=CYAN_TEXT, anchor="lm")
+    if soste is None:
+        return
+    bx = tx + font.getlength(waypoint) + _scale(26)
+    draw.text((bx, cy), "•", font=font, fill=CYAN_TEXT, anchor="mm")
+    sx = bx + _scale(42)
+    watch = _scale(35)
+    _paint_icon(
+        img, sx, cy, watch * 0.62,
+        lambda d, ax, ay, s: _draw_stopwatch_icon(d, ax, ay, watch * s, _META_ICON, u * s),
+    )
+    draw.text((sx + _scale(40), cy), soste, font=font, fill=CYAN_TEXT, anchor="lm")
+
+
+def _draw_tile_models(draw, x, cy, models, on, fonts_map):
+    f_label = fonts_map["models_label"]
+    f_chip = fonts_map["chip"]
+    draw.text((x, cy), WAYPOINT_MODELS_LABEL, font=f_label, fill=CYAN_BRIGHT, anchor="lm")
+    cx = x + int(f_label.getlength(WAYPOINT_MODELS_LABEL)) + _scale(30)
     for label in models:
-        w = int(f_chip.getlength(label)) + S(26)
+        w = int(f_chip.getlength(label)) + _scale(50)
         draw.rounded_rectangle(
-            (cx, y - S(15), cx + w, y + S(15)), radius=S(15),
-            fill=(*color, 46) if on else (44, 48, 58),
-            outline=(*color, 190) if on else (70, 75, 88), width=S(1),
+            (cx, cy - _scale(22), cx + w, cy + _scale(22)), radius=_scale(22),
+            fill=_CHIP_FILL_ON if on else _CHIP_FILL,
+            outline=_CHIP_EDGE_ON if on else _CHIP_EDGE, width=max(1, round(2 * _unit())),
         )
-        draw.text(
-            (cx + w // 2, y), label, font=f_chip,
-            fill=(238, 240, 245) if on else (150, 155, 168), anchor="mm",
-        )
-        cx += w + S(10)
+        draw.text((cx + w // 2, cy), label, font=f_chip, fill=WHITE, anchor="mm")
+        cx += w + _scale(16)
 
 
-def _render_waypoint_screen(width, height, names, descriptions, colors, enabled,
+def _draw_tile(img, r, index, name, description, summary, models, on, is_focus, fonts_map):
+    SS = _SUPERSAMPLE
+    u = _unit()
+    x0, y0, x1, y1 = r.x * SS, r.y * SS, r.right * SS, r.bottom * SS
+    acceso = on or is_focus
+
+    glow_box(
+        img, (x0, y0, x1, y1), radius=12 * u,
+        edge=_TILE_EDGE_ON if acceso else _TILE_EDGE, width=(2.4 if acceso else 1.8) * u,
+        fill=_TILE_FILL_ON if on else _TILE_FILL,
+        glow=(9 if acceso else 4) * u, glow_alpha=170 if acceso else 70,
+    )
+    draw = ImageDraw.Draw(img)
+    if is_focus:
+        rientro = 9 * u
+        corner_brackets(
+            draw, (x0 + rientro, y0 + rientro, x1 - rientro, y1 - rientro),
+            arm=22 * u, width=4 * u, color=CYAN_BRIGHT,
+        )
+
+    cy = (y0 + y1) / 2
+    _draw_tile_badge(img, index + 1, x0 + _scale(32), cy, _scale(43), fonts_map["badge"])
+
+    tx = x0 + _scale(_TILE_TEXT_X)
+    text_max_w = (x1 - x0) - 2 * _scale(_TILE_TEXT_X)
+    fisso = _scale(_tile_offsets(1)["bottom"])
+    righe_max = 1 + max(0, ((y1 - y0) - fisso) // _scale(_TILE_DESC_STEP))
+    righe = wrap_text(description, fonts_map["desc"], text_max_w, righe_max)
+    offsets = _tile_offsets(len(righe))
+    top = y0 + max(0, ((y1 - y0) - _scale(offsets["bottom"])) // 2)
+
+    draw.text((tx, top + _scale(_TILE_NAME_Y)), fit_text(name, fonts_map["name"], text_max_w),
+              font=fonts_map["name"], fill=WHITE, anchor="lm")
+    for n, riga in enumerate(righe):
+        draw.text((tx, top + _scale(_TILE_DESC_Y + _TILE_DESC_STEP * n)), riga,
+                  font=fonts_map["desc"], fill=CYAN_TEXT, anchor="lm")
+
+    _draw_tile_summary(img, tx, top + _scale(offsets["meta"]), summary, on, fonts_map)
+    dy = top + _scale(offsets["divider"])
+    draw.line((tx, dy, x1 - _scale(_TILE_TEXT_X), dy), fill=LINE_DIM, width=max(1, round(1.5 * u)))
+    if models:
+        _draw_tile_models(draw, tx, top + _scale(offsets["models"]), models, on, fonts_map)
+
+    ix = x1 - _scale(68)
+    raggio = _scale(38)
+    simbolo = _draw_check if on else _draw_ring
+    _paint_icon(
+        img, ix, cy, raggio + _scale(4),
+        lambda d, ax, ay, s: simbolo(d, ax, ay, raggio * s, u * s),
+    )
+
+
+def _render_waypoint_screen(width, height, names, descriptions, summaries, enabled,
                             focus, focused, rects, confirm_rect, cancel_rect, back_rect,
                             cancel_hover, confirm_hover, back_hover, models):
     _apply_layout_scale(width, height)
     SS = _SUPERSAMPLE
     W, H = width * SS, height * SS
-    margin_x = max(40, int(width * 0.06))
-
     S = _scale
+    u = _unit()
 
-    f_title  = fonts.sans_bold(S(44))
-    f_sub    = fonts.sans(S(26))
-    f_name   = fonts.sans_bold(S(34))
-    f_desc   = fonts.sans(S(24))
-    f_badge  = fonts.sans_bold(S(30))
-    f_hint   = fonts.sans(S(20))
-    f_btn    = fonts.sans_bold(S(23))
-    f_msg    = fonts.sans_bold(S(28))
+    fonts_map = {
+        "title": fonts.sans_bold(S(62)),
+        "subtitle": fonts.sans(S(_SUBTITLE_PX)),
+        "name": fonts.sans_bold(S(41)),
+        "desc": fonts.sans(S(_TILE_DESC_PX)),
+        "meta": fonts.sans(S(27)),
+        "badge": fonts.sans_bold(S(46)),
+        "models_label": fonts.sans_bold(S(22)),
+        "chip": fonts.sans(S(25)),
+        "hint": fonts.sans(S(24)),
+        "button": fonts.sans_bold(S(25)),
+        "message": fonts.sans_bold(S(28)),
+    }
 
-    img = bg_gradient(W, H).convert("RGBA")
-
-    _draw_screen_backdrop(img, W, H, rects, focus, colors, enabled)
-
+    img = grid_background(W, H, S(64), S(6))
     draw = ImageDraw.Draw(img)
-
-    _draw_screen_heading(
-        img, draw, W,
-        WAYPOINT_TITLE,
-        WAYPOINT_SUBTITLE,
-        f_title, f_sub,
-    )
+    draw.text((W // 2, S(52)), WAYPOINT_TITLE, font=fonts_map["title"], fill=WHITE, anchor="mm")
+    draw.text((W // 2, S(111)), WAYPOINT_SUBTITLE, font=fonts_map["subtitle"],
+              fill=CYAN_TEXT, anchor="mm")
 
     for i, r in enumerate(rects):
-        on, color = enabled[i], colors[i]
-        x0, y0, x1, y1 = _draw_tile_frame(img, draw, r, color, on, i == focus)
+        _draw_tile(
+            img, r, i, names[i], descriptions[i], summaries[i], models[i],
+            enabled[i], i == focus, fonts_map,
+        )
 
-        pad = S(18)
-        bsz = S(56)
-        bcy = (y0 + y1) // 2
-        bx0 = x0 + pad
-        tx = bx0 + bsz + S(64)
-        text_max_w = r.width * SS - 2 * pad - S(100) - S(140)
-        name_color = (238, 240, 245) if on else (176, 181, 192)
-        desc_color = (198, 203, 214) if on else (160, 165, 177)
-        name_text = fit_text(names[i], f_name, text_max_w)
-
-        asc_n, desc_n = f_name.getmetrics()
-        name_lh = asc_n + desc_n
-        asc_d, desc_d = f_desc.getmetrics()
-        desc_lh = asc_d + desc_d
-
-        tile_models = models[i]
-        chip_h = S(34) if tile_models else 0
-
-        pad_v = S(16)
-        avail_desc_h = (y1 - y0) - 2 * pad_v - name_lh - S(6) - chip_h
-        max_desc_lines = max(1, int(avail_desc_h // desc_lh))
-        desc_lines = wrap_text(descriptions[i], f_desc, text_max_w, max_desc_lines)
-
-        gap_nd = S(6) if desc_lines else 0
-        total_h = name_lh + gap_nd + len(desc_lines) * desc_lh + chip_h
-        ty = bcy - total_h // 2
-
-        by0 = bcy - bsz // 2
-        _draw_tile_badge(draw, i + 1, bx0, by0, bcy, bsz, color, f_badge)
-
-        draw.text((tx, ty), name_text, font=f_name, fill=name_color, anchor="lt")
-        ly = ty + name_lh + gap_nd
-        for line in desc_lines:
-            draw.text((tx, ly), line, font=f_desc, fill=desc_color, anchor="lt")
-            ly += desc_lh
-
-        if tile_models:
-            _draw_tile_models(draw, tx, ly + S(16), tile_models, color, on)
-
-        _draw_tile_toggle(draw, x1, bcy, pad, on, color)
-
+    draw = ImageDraw.Draw(img)
     if not focused and rects:
         _draw_alert(draw, W, height, max(r.bottom for r in rects), "info",
-                    "La finestra non è attiva, clicca per usarla", f_msg)
+                    "La finestra non è attiva, clicca per usarla", fonts_map["message"])
 
-    linea = _px(back_rect.y - 14)
+    linea = _px(back_rect.y) - S(28)
     draw.line(
-        [(_px(margin_x), linea), (W - _px(margin_x), linea)],
-        fill=(32, 35, 43), width=S(1),
+        [(_px(cancel_rect.x), linea), (_px(confirm_rect.right), linea)],
+        fill=FOOTER_RULE, width=max(1, round(1.3 * u)),
     )
 
     hint_groups = [
@@ -421,35 +462,22 @@ def _render_waypoint_screen(width, height, names, descriptions, colors, enabled,
         ("cross", "seleziona"),
     ]
     _draw_joystick_hints(
-        draw, hint_groups, f_hint=f_hint, cancel_rect=cancel_rect, margin_x=margin_x,
+        img, hint_groups, f_hint=fonts_map["hint"],
+        start_x=_px(cancel_rect.right) + S(50), cy=_px(cancel_rect.centery),
     )
 
     mapping = APP_CONFIG.joystick
     for rect, testo, etichetta, hover in (
-        (back_rect, "Indietro", mapping.label_setup_back, back_hover),
         (cancel_rect, "Annulla", mapping.label_setup_cancel, cancel_hover),
+        (back_rect, "Indietro", mapping.label_setup_back, back_hover),
+        (confirm_rect, "Conferma", mapping.label_setup_confirm, confirm_hover),
     ):
-        draw.rounded_rectangle(
-            [rect.x * SS, rect.y * SS, rect.right * SS, rect.bottom * SS], radius=S(9),
-            fill=(30, 34, 42) if hover else (22, 25, 32), outline=(70, 76, 90), width=S(1),
-        )
-        draw.text(
-            ((rect.x + rect.width / 2) * SS, (rect.y + rect.height / 2) * SS),
-            _button_label(testo, etichetta), font=f_btn, fill=(205, 209, 218), anchor="mm",
+        draw_hover_button(
+            img, (_px(rect.x), _px(rect.y), _px(rect.right), _px(rect.bottom)),
+            _button_label(testo, etichetta), fonts_map["button"], unit=u, hover=hover,
         )
 
-    qb = confirm_rect
-    draw.rounded_rectangle(
-        [qb.x * SS, qb.y * SS, qb.right * SS, qb.bottom * SS], radius=S(9),
-        fill=(80, 210, 130) if confirm_hover else (61, 200, 132),
-    )
-    draw.text(
-        ((qb.x + qb.width / 2) * SS, (qb.y + qb.height / 2) * SS),
-        _button_label("Conferma", mapping.label_setup_confirm),
-        font=f_btn, fill=(8, 19, 12), anchor="mm",
-    )
-
-    final = img.convert("RGB").resize((width, height), Image.LANCZOS)
+    final = img.resize((width, height), Image.LANCZOS)
     return pygame.image.frombytes(final.tobytes(), final.size, "RGB").convert()
 
 
@@ -457,8 +485,8 @@ def select_waypoint_path_interactive(screen, paths, models=()):
     n = len(paths)
     names = [p.name for p in paths]
     descriptions = [getattr(p, "description", "") or "" for p in paths]
+    summaries = [_path_summary(p) for p in paths]
     models = [list(models[i]) if i < len(models) else [] for i in range(n)]
-    colors = [_WAYPOINT_PALETTE[i % len(_WAYPOINT_PALETTE)] for i in range(n)]
 
     selected = 0
     focus = 0
@@ -536,7 +564,7 @@ def select_waypoint_path_interactive(screen, paths, models=()):
         )
         if sig != cache_sig:
             cached_surf = _render_waypoint_screen(
-                width, height, names, descriptions, colors, enabled,
+                width, height, names, descriptions, summaries, enabled,
                 focus, focused, rects, confirm_rect, cancel_rect, back_rect,
                 cancel_hover, confirm_hover, back_hover, models,
             )

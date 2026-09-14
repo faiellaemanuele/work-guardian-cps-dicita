@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import pygame
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from drone.config import APP_CONFIG
 from drone.hardware.joystick import (
@@ -15,43 +15,49 @@ from drone.hardware.joystick import (
 from drone.ui import fonts
 from drone.ui.appearance import ASSETS_DIR, LOGO_GLOB, PROJECT_TITLE
 from drone.ui.setup.effects import (
+    CYAN_BRIGHT,
     CrossfadeBlitter,
+    FOOTER_RULE,
+    WHITE,
+    YELLOW,
+    draw_hover_button,
     fade_screen,
     flash_button_press,
     focus_window,
+    grid_background,
     maximize_window,
 )
+from drone.ui.shapes import glow_box, paint_supersampled
 
 
-SUBTITLE = "Sorveglianza del cantiere con drone"
-
-PLATFORM_TITLE = "La piattaforma"
+PLATFORM_TITLE = "Cos'è WORK-GUARDIAN?"
 
 PLATFORM_PARAGRAPHS = (
-    "Work Guardian sorveglia un cantiere dall'alto. Un drone Tello EDU percorre da solo "
-    "una rotta di waypoint e si ferma nei punti di supervisione, dove guarda il cantiere "
-    "con la vista artificiale e scrive nel log ciò che non va.",
-    "Si localizza dai marker AprilTag posati sul cantiere, quindi sa dove si trova senza "
-    "GPS, anche al chiuso. Il pilota sei sempre tu: il controller riprende il comando in "
-    "qualunque momento.",
-    "Nella schermata successiva scegli lo scenario. Da lì vengono la rotta, i controlli "
-    "che il drone esegue durante le soste e i modelli di riconoscimento, che si caricano "
-    "da soli.",
+    "Work-Guardian è un progetto per la sicurezza nei cantieri edili, con particolare "
+    "attenzione alle lavorazioni in quota. Integra un drone, un dispositivo indossabile per "
+    "gli operatori e una stazione centrale, così da osservare sia l'ambiente di lavoro sia le "
+    "condizioni dei lavoratori.",
+    "Il flusso video acquisito dal drone aiuta a individuare protezioni mancanti e situazioni "
+    "di pericolo. Il dispositivo indossabile rileva parametri fisiologici che possono "
+    "segnalare una condizione anomala. La stazione centrale riunisce queste informazioni e "
+    "comunica le criticità al supervisore e agli operatori interessati, offrendo un supporto "
+    "per intervenire tempestivamente.",
 )
 
 NOTES = (
     (
         "SICUREZZA AUTOMATICA",
-        "Sotto il 30% di batteria rientra alla home, sotto il 20% atterra dov'è.",
+        "Quando la batteria è sotto al 30% il drone rientra e atterra automaticamente alla "
+        "home. Quando la batteria è sotto al 20% il drone atterra nella posizione corrente.",
     ),
     (
         "DATI DEL VOLO",
-        "Si salvano solo a missione completata: un atterraggio manuale non lascia file.",
+        "I dati del volo vengono salvati solo quando la missione termina correttamente o "
+        "quando viene premuto il tasto Options.",
     ),
 )
 
-COMMANDS_TITLE = "Comandi del controller"
-AXES_TITLE = "STICK"
+COMMANDS_TITLE = "Comandi per il controllo del drone"
 
 START_TEXT = "Inizia"
 EXIT_TEXT = "Esci"
@@ -75,9 +81,15 @@ _REFERENCE_HEIGHT = 1080
 
 _LAYOUT_SCALE = 1.0
 
+_FIT_ATTEMPTS = 10
+
 
 def _scale(value: float) -> int:
     return int(round(value * _SUPERSAMPLE * _LAYOUT_SCALE))
+
+
+def _unit() -> float:
+    return _SUPERSAMPLE * _LAYOUT_SCALE
 
 
 def _base_layout_scale(width: int, height: int) -> float:
@@ -87,34 +99,73 @@ def _base_layout_scale(width: int, height: int) -> float:
     )
 
 
-_BG = (255, 255, 255)
-_BG_WASH = (242, 244, 249)
-_CARD_BG = (13, 15, 20)
-_CARD_BORDER = (0, 0, 0)
-_TEXT = (238, 240, 245)
-_MUTED = (138, 146, 162)
-_SOFT = (198, 204, 216)
-_AMBER = (232, 165, 32)
-_INK = (18, 21, 28)
-_INK_SOFT = (92, 100, 116)
+_FRAME_OUTER = (4, 160, 172)
+_FRAME_INNER = (4, 222, 230)
 
-_NOTE_BG = (30, 25, 14)
-_NOTE_BORDER = (104, 80, 32)
+_CARD_BG = (3, 31, 55)
+_CARD_EDGE = (4, 206, 216)
+_UNDERLINE = (8, 244, 252)
+_NOT_FOCUSED = (252, 190, 16)
 
-_GLYPH_BG = (26, 30, 39)
-_GLYPH_BORDER = (66, 72, 88)
-_SHOULDER = (206, 212, 224)
+_NOTE_BG = (3, 39, 69)
+_NOTE_STYLES = (
+    ("warn", YELLOW, (240, 210, 8)),
+    ("info", CYAN_BRIGHT, (4, 196, 220)),
+)
+_WARN_INK = (10, 14, 18)
+
+_PAD_FILL = (12, 14, 20)
+_PAD_RIM = (112, 120, 136)
+_PAD_INK = (236, 240, 246)
 
 _GLYPH_COLORS = {
     "Croce": ("cross", (124, 178, 232)),
-    "Cerchio": ("circle", (232, 106, 118)),
-    "Quadrato": ("square", (226, 128, 206)),
-    "Triangolo": ("triangle", (108, 214, 158)),
+    "Cerchio": ("circle", (255, 102, 102)),
+    "Quadrato": ("square", (244, 122, 220)),
+    "Triangolo": ("triangle", (64, 226, 160)),
 }
 
-_BANNER_WIDTH = 540
+_LEFT_SHARE = 0.57
 
-_BANNER_CACHE: dict[int, "Image.Image"] = {}
+_TITLE_Y = 44
+_TITLE_RULE_Y = 82
+
+_BODY_TOP = 126
+_BODY_STEP = 33
+_PARAGRAPH_GAP = 14
+
+_NOTE_INSET = 30
+_NOTE_ICON_X = 50
+_NOTE_RULE_X = 94
+_NOTE_TEXT_X = 112
+_NOTE_TITLE_Y = 30
+_NOTE_TEXT_Y = 60
+_NOTE_STEP = 28
+_NOTE_BOTTOM = 30
+_NOTE_GAP = 14
+
+_ROWS_TOP = 128
+_ROW_STEP = 46
+_ACTION_STEP = 28
+_GLYPH_GAP = 10
+_GROUP_GAP = 26
+
+_BANNER_SOURCE_SIZE = (1983, 797)
+
+_BANNER_PIECES = (
+    ((0, 275, 650, 575), 0.64, ("width", 0.166), 0.32, 0.35, False),
+    ((668, 228, 1192, 610), 0.83, ("width", 0.302), 0.09, 0.2, False),
+    ((935, 395, 1250, 650), 0.56, ("width", 0.571), 0.41, 0.3, False),
+    ((0, 275, 650, 575), 0.70, ("width", 0.632), 0.26, 0.35, True),
+    ((668, 228, 1192, 610), 0.60, ("width", 0.754), 0.20, 0.3, False),
+    ((0, 275, 650, 575), 0.59, ("width", 0.798), 0.38, 0.35, False),
+    ((1805, 310, 1983, 665), 0.75, ("right", 0.45), 0.20, 0.2, False),
+    ((1255, 105, 1850, 665), 0.88, ("width", 0.45), 0.05, 0.0, False),
+    ((55, 100, 1145, 212), 0.25, ("height", 0.12), 0.09, 0.0, False),
+    ((75, 585, 735, 722), 0.28, ("height", 0.12), 0.62, 0.0, False),
+)
+
+_BANNER_CACHE: dict[tuple[int, int], "Image.Image"] = {}
 
 
 def _logo_file() -> Optional[Path]:
@@ -127,44 +178,77 @@ def _logo_file() -> Optional[Path]:
     return None
 
 
-def _logo_image(width: int) -> Optional["Image.Image"]:
-    cached = _BANNER_CACHE.get(width)
+def _multiply_paste(band, piece, x: float, y: float) -> None:
+    x, y = int(round(x)), int(round(y))
+    sx0, sy0 = max(0, -x), max(0, -y)
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(band.width, x + piece.width), min(band.height, y + piece.height)
+    if x1 <= x0 or y1 <= y0:
+        return
+    ritaglio = piece.crop((sx0, sy0, sx0 + (x1 - x0), sy0 + (y1 - y0)))
+    band.paste(ImageChops.multiply(band.crop((x0, y0, x1, y1)), ritaglio), (x0, y0))
+
+
+def _banner_image(width: int, height: int) -> Optional["Image.Image"]:
+    width, height = max(1, int(width)), max(1, int(height))
+    cached = _BANNER_CACHE.get((width, height))
     if cached is not None:
         return cached
 
     path = _logo_file()
     if path is None:
         return None
-
     try:
-        banner = Image.open(path).convert("RGB")
+        sorgente = Image.open(path).convert("RGB")
     except OSError:
         return None
 
-    altezza = max(1, int(round(width * banner.height / banner.width)))
-    banner = banner.resize((width, altezza), Image.LANCZOS)
+    fx = sorgente.width / _BANNER_SOURCE_SIZE[0]
+    fy = sorgente.height / _BANNER_SOURCE_SIZE[1]
+    fascia = Image.new("RGB", (width, height), (255, 255, 255))
+    for box, alto, (ancora, valore), y, sbiadito, specchio in _BANNER_PIECES:
+        pezzo = sorgente.crop((
+            round(box[0] * fx), round(box[1] * fy), round(box[2] * fx), round(box[3] * fy),
+        ))
+        h = max(1, round(height * alto))
+        pezzo = pezzo.resize((max(1, round(pezzo.width * h / pezzo.height)), h), Image.LANCZOS)
+        if specchio:
+            pezzo = pezzo.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if sbiadito:
+            pezzo = Image.blend(pezzo, Image.new("RGB", pezzo.size, (255, 255, 255)), sbiadito)
+        if ancora == "width":
+            x = valore * width
+        elif ancora == "right":
+            x = width - valore * height
+        else:
+            x = valore * height
+        _multiply_paste(fascia, pezzo, x, y * height)
 
     _BANNER_CACHE.clear()
-    _BANNER_CACHE[width] = banner
-    return banner
+    _BANNER_CACHE[(width, height)] = fascia
+    return fascia
 
 
-def _banner_height(width: int) -> int:
-    banner = _logo_image(width)
-    return banner.height if banner is not None else _scale(96)
-
-
-def _draw_logo(img, cx: int, top: int, width: int) -> int:
-    banner = _logo_image(width)
+def _draw_banner(img, box, fonts_map) -> None:
+    x0, y0, x1, y1 = box
+    u = _unit()
+    glow_box(img, box, radius=3 * u, edge=_FRAME_OUTER, width=2 * u, glow=8 * u, glow_alpha=150)
+    inset = int(round(6 * u))
+    banner = _banner_image(x1 - x0 - 2 * inset, y1 - y0 - 2 * inset)
+    draw = ImageDraw.Draw(img)
     if banner is not None:
-        img.paste(banner, (cx - width // 2, top))
-        return top + banner.height
-    font = fonts.sans_bold(_scale(46))
-    altezza = _scale(96)
-    ImageDraw.Draw(img).text(
-        (cx, top + altezza // 2), PROJECT_TITLE, font=font, fill=_INK, anchor="mm",
+        img.paste(banner, (x0 + inset, y0 + inset))
+    else:
+        draw.rectangle((x0 + inset, y0 + inset, x1 - inset, y1 - inset), fill=_CARD_BG)
+        draw.text(
+            ((x0 + x1) / 2, (y0 + y1) / 2), PROJECT_TITLE,
+            font=fonts_map["fallback_title"], fill=WHITE, anchor="mm",
+        )
+    bordo = 4 * u
+    draw.rectangle(
+        (x0 + bordo, y0 + bordo, x1 - bordo, y1 - bordo),
+        outline=_FRAME_INNER, width=max(1, round(1.6 * u)),
     )
-    return top + altezza
 
 
 def _wrap(text: str, font, max_width: int) -> list[str]:
@@ -182,341 +266,312 @@ def _wrap(text: str, font, max_width: int) -> list[str]:
     return righe
 
 
-def _background(width: int, height: int) -> "Image.Image":
-    img = Image.new("RGB", (width, height), _BG)
+def _draw_card(img, box, title, fonts_map) -> None:
+    u = _unit()
+    glow_box(img, box, radius=14 * u, edge=_CARD_EDGE, width=2 * u, fill=_CARD_BG,
+             glow=7 * u, glow_alpha=120)
     draw = ImageDraw.Draw(img)
-    fascia = _scale(260)
-    for i in range(fascia):
-        f = i / fascia
-        colore = tuple(int(_BG_WASH[c] * (1.0 - f) + _BG[c] * f) for c in range(3))
-        draw.line((0, i, width, i), fill=colore)
-    return img.convert("RGBA")
-
-
-def _draw_card(img, draw, box, title, font_title) -> None:
-    x0, y0, x1, y1 = box
-    ombra = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(ombra).rounded_rectangle(
-        (x0 + _scale(3), y0 + _scale(7), x1 + _scale(3), y1 + _scale(7)),
-        radius=_scale(16), fill=(15, 20, 35, 30),
-    )
-    img.alpha_composite(ombra)
-    draw.rounded_rectangle(
-        (x0, y0, x1, y1), radius=_scale(16),
-        fill=_CARD_BG, outline=_CARD_BORDER, width=_scale(1),
-    )
-    draw.text((x0 + _scale(30), y0 + _scale(26)), title, font=font_title, fill=_TEXT, anchor="lt")
-    draw.line(
-        (x0 + _scale(30), y0 + _scale(68), x1 - _scale(30), y0 + _scale(68)),
-        fill=(48, 53, 66), width=_scale(1),
-    )
-
-
-def _draw_glyph(draw, kind, color, cx: int, cy: int, r: int) -> None:
-    draw.ellipse(
-        (cx - r, cy - r, cx + r, cy + r),
-        fill=_GLYPH_BG, outline=_GLYPH_BORDER, width=_scale(1),
-    )
-    k = r * 0.46
-    if kind == "cross":
-        draw.line((cx - k, cy - k, cx + k, cy + k), fill=color, width=_scale(3))
-        draw.line((cx - k, cy + k, cx + k, cy - k), fill=color, width=_scale(3))
-    elif kind == "circle":
-        draw.ellipse((cx - k, cy - k, cx + k, cy + k), outline=color, width=_scale(3))
-    elif kind == "square":
-        draw.rectangle((cx - k, cy - k, cx + k, cy + k), outline=color, width=_scale(3))
-    else:
-        draw.polygon(
-            [
-                (cx, cy - k * 1.18),
-                (cx + k * 1.08, cy + k * 0.82),
-                (cx - k * 1.08, cy + k * 0.82),
-            ],
-            outline=color, width=_scale(3),
-        )
-
-
-def _draw_key(draw, x: int, cy: int, label: str, font, width: int) -> None:
-    h = _scale(36)
-    draw.rounded_rectangle(
-        (x, cy - h // 2, x + width, cy + h // 2), radius=_scale(9),
-        fill=_GLYPH_BG, outline=(80, 87, 105), width=_scale(1),
-    )
-    draw.line(
-        (x + _scale(6), cy + h // 2 - _scale(3), x + width - _scale(6), cy + h // 2 - _scale(3)),
-        fill=(80, 87, 105), width=_scale(2),
-    )
-    draw.text((x + width // 2, cy), label, font=font, fill=_SHOULDER, anchor="mm")
-
-
-def _draw_stick(draw, verso: str, cx: int, cy: int, r: int) -> None:
-    draw.ellipse(
-        (cx - r, cy - r, cx + r, cy + r),
-        fill=_GLYPH_BG, outline=(74, 81, 98), width=_scale(1),
-    )
-    draw.ellipse(
-        (cx - r * 0.38, cy - r * 0.38, cx + r * 0.38, cy + r * 0.38), fill=(104, 112, 130),
-    )
-    a = r * 0.80
-    punta = (182, 190, 206)
-    if verso == "orizzontale":
-        draw.line((cx - a, cy, cx + a, cy), fill=punta, width=_scale(2))
-        for sx in (-1, 1):
-            draw.polygon(
-                [
-                    (cx + sx * a, cy),
-                    (cx + sx * (a - _scale(7)), cy - _scale(5)),
-                    (cx + sx * (a - _scale(7)), cy + _scale(5)),
-                ],
-                fill=punta,
-            )
-    else:
-        draw.line((cx, cy - a, cx, cy + a), fill=punta, width=_scale(2))
-        for sy in (-1, 1):
-            draw.polygon(
-                [
-                    (cx, cy + sy * a),
-                    (cx - _scale(5), cy + sy * (a - _scale(7))),
-                    (cx + _scale(5), cy + sy * (a - _scale(7))),
-                ],
-                fill=punta,
-            )
-
-
-def _draw_notes(draw, x0: int, x1: int, bottom: int, font_label, font_text) -> int:
-    y1 = bottom - _scale(26)
-    for title, text in reversed(NOTES):
-        y0 = y1 - _scale(70)
-        draw.rounded_rectangle(
-            (x0, y0, x1, y1), radius=_scale(12),
-            fill=_NOTE_BG, outline=_NOTE_BORDER, width=_scale(1),
-        )
-        draw.text((x0 + _scale(20), y0 + _scale(25)), title,
-                  font=font_label, fill=_AMBER, anchor="lm")
-        draw.text((x0 + _scale(20), y0 + _scale(53)), text,
-                  font=font_text, fill=_SOFT, anchor="lm")
-        y1 = y0 - _scale(14)
-    return y1
-
-
-def _notes_block_height() -> int:
-    return _scale(26) + len(NOTES) * _scale(70) + (len(NOTES) - 1) * _scale(14)
-
-
-def _platform_height(larghezza: int, fonts_map) -> int:
-    max_w = larghezza - _scale(74)
-    paragrafi = [_wrap(testo, fonts_map["body"], max_w) for testo in PLATFORM_PARAGRAPHS]
-    occupato = sum(_scale(34) * len(righe) for righe in paragrafi)
-    return (
-        _scale(108) + occupato + len(paragrafi) * _scale(18) + _notes_block_height()
-    )
-
-
-def _draw_platform_card(img, draw, box, fonts_map) -> None:
-    x0, y0, x1, y1 = box
-    _draw_card(img, draw, box, PLATFORM_TITLE, fonts_map["card"])
-
-    limite = _draw_notes(
-        draw, x0 + _scale(30), x1 - _scale(30), y1,
-        fonts_map["note_label"], fonts_map["note_text"],
-    )
-
-    max_w = x1 - x0 - _scale(74)
-    paragrafi = [_wrap(testo, fonts_map["body"], max_w) for testo in PLATFORM_PARAGRAPHS]
-    altezza_riga = _scale(34)
-    occupato = sum(altezza_riga * len(righe) for righe in paragrafi)
-    y = y0 + _scale(108)
-    stacco = max(_scale(18), (limite - y - occupato) // max(1, len(paragrafi)))
-
-    for righe in paragrafi:
-        for riga in righe:
-            draw.text((x0 + _scale(37), y), riga, font=fonts_map["body"], fill=_SOFT, anchor="lm")
-            y += altezza_riga
-        y += stacco
-
-
-def _command_columns(x0: int, fonts_map, gruppi, assi):
-    raggio = _scale(20)
-    larghezza_tasto = max(
-        [
-            int(fonts_map["key"].getlength(tasto)) + _scale(24)
-            for _sezione, righe in gruppi
-            for tasto, _azione in righe
-            if tasto not in _GLYPH_COLORS
-        ]
-        or [raggio * 2]
-    )
-    colonna_nome = x0 + max(raggio * 2, larghezza_tasto) + _scale(22)
-    larghezza_nome = max(
-        [
-            int(fonts_map["name"].getlength(tasto))
-            for _sezione, righe in gruppi
-            for tasto, _azione in righe
-            if tasto in _GLYPH_COLORS
-        ]
-        + [int(fonts_map["name"].getlength(verso)) for _lato, verso, _azione in assi]
-    )
-    return raggio, larghezza_tasto, colonna_nome, colonna_nome + larghezza_nome + _scale(24)
-
-
-def _commands_height(larghezza: int, fonts_map) -> int:
-    gruppi = joystick_action_groups()
-    assi = joystick_axis_details()
-    _raggio, _tasto_w, _colonna_nome, colonna_azione = _command_columns(
-        _scale(30), fonts_map, gruppi, assi,
-    )
-    azione_max_w = larghezza - _scale(30) - colonna_azione
-
-    altezza = _scale(86)
-    for _sezione, righe in gruppi:
-        altezza += _scale(26)
-        for _tasto, azione in righe:
-            testo = _wrap(azione, fonts_map["action"], azione_max_w)
-            altezza += _scale(38) + _scale(26) * (len(testo) - 1)
-        altezza += _scale(6)
-    altezza += _scale(2) + _scale(22) + _scale(28)
-    altezza += _scale(38) * len(assi)
-    return altezza + _scale(20)
-
-
-def _draw_commands_card(img, draw, box, fonts_map) -> None:
     x0, y0, x1, _y1 = box
-    _draw_card(img, draw, box, COMMANDS_TITLE, fonts_map["card"])
+    draw.text((x0 + _scale(32), y0 + _scale(_TITLE_Y)), title, font=fonts_map["card"],
+              fill=WHITE, anchor="lm")
+    draw.line(
+        (x0 + _scale(29), y0 + _scale(_TITLE_RULE_Y), x1 - _scale(29), y0 + _scale(_TITLE_RULE_Y)),
+        fill=_UNDERLINE, width=max(1, round(3 * u)),
+    )
 
+
+def _paint_icon(img, cx, cy, reach, paint) -> None:
+    paint_supersampled(img, (cx - reach, cy - reach, cx + reach, cy + reach), (cx, cy), paint)
+
+
+def _draw_glyph(img, kind, color, cx, cy, r) -> None:
+    u = _unit()
+
+    def paint(d, ax, ay, s):
+        rr = r * s
+        d.ellipse((ax - rr, ay - rr, ax + rr, ay + rr), fill=_PAD_FILL, outline=_PAD_RIM,
+                  width=max(1, round(2 * u * s)))
+        w = max(1, round(3.4 * u * s))
+        k = rr * 0.42
+        if kind == "cross":
+            d.line((ax - k, ay - k, ax + k, ay + k), fill=color, width=w)
+            d.line((ax - k, ay + k, ax + k, ay - k), fill=color, width=w)
+        elif kind == "circle":
+            d.ellipse((ax - k, ay - k, ax + k, ay + k), outline=color, width=w)
+        elif kind == "square":
+            q = k * 0.9
+            d.rectangle((ax - q, ay - q, ax + q, ay + q), outline=color, width=w)
+        else:
+            d.polygon(
+                [
+                    (ax, ay - k * 1.1),
+                    (ax + k * 1.12, ay + k * 0.82),
+                    (ax - k * 1.12, ay + k * 0.82),
+                ],
+                outline=color, width=w,
+            )
+
+    _paint_icon(img, cx, cy, r + _scale(3), paint)
+
+
+def _draw_stick(img, letter: str, cx, cy, r, font) -> None:
+    u = _unit()
+    _paint_icon(
+        img, cx, cy, r + _scale(3),
+        lambda d, ax, ay, s: d.ellipse(
+            (ax - r * s, ay - r * s, ax + r * s, ay + r * s),
+            fill=_PAD_FILL, outline=_PAD_RIM, width=max(1, round(2 * u * s)),
+        ),
+    )
+    ImageDraw.Draw(img).text((cx, cy), letter, font=font, fill=_PAD_INK, anchor="mm")
+
+
+def _draw_key(img, x, cy, w, h, label: str, font) -> None:
+    u = _unit()
+    _paint_icon(
+        img, x + w / 2, cy, w / 2 + _scale(3),
+        lambda d, ax, ay, s: d.rounded_rectangle(
+            (ax - w / 2 * s, ay - h / 2 * s, ax + w / 2 * s, ay + h / 2 * s), radius=_scale(9) * s,
+            fill=_PAD_FILL, outline=_PAD_RIM, width=max(1, round(2 * u * s)),
+        ),
+    )
+    ImageDraw.Draw(img).text((x + w / 2, cy), label, font=font, fill=_PAD_INK, anchor="mm")
+
+
+def _draw_warn_icon(draw, cx, cy, size, color) -> None:
+    h = size * 0.9
+    draw.polygon(
+        [(cx, cy - h / 2), (cx + h * 0.58, cy + h / 2), (cx - h * 0.58, cy + h / 2)],
+        fill=color,
+    )
+    draw.line((cx, cy - h * 0.12, cx, cy + h * 0.2), fill=_WARN_INK,
+              width=max(1, round(size * 0.08)))
+    e = size * 0.05
+    draw.ellipse((cx - e, cy + h * 0.3 - e, cx + e, cy + h * 0.3 + e), fill=_WARN_INK)
+
+
+def _draw_info_icon(draw, cx, cy, size, color, font) -> None:
+    r = size * 0.46
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=color,
+                 width=max(1, round(size * 0.075)))
+    draw.text((cx, cy + size * 0.02), "i", font=font, fill=color, anchor="mm")
+
+
+def _note_styles() -> list:
+    return [_NOTE_STYLES[i % len(_NOTE_STYLES)] for i in range(len(NOTES))]
+
+
+def _platform_layout(box, fonts_map):
+    x0, y0, x1, y1 = box
+    testo_x = x0 + _scale(32)
+    max_w = x1 - x0 - _scale(64)
+    righe = []
+    y = y0 + _scale(_BODY_TOP)
+    ultima = y
+    for indice, paragrafo in enumerate(PLATFORM_PARAGRAPHS):
+        if indice:
+            y += _scale(_PARAGRAPH_GAP)
+        for riga in _wrap(paragrafo, fonts_map["body"], max_w):
+            righe.append((testo_x, y, riga))
+            ultima = y
+            y += _scale(_BODY_STEP)
+
+    nx0, nx1 = x0 + _scale(_NOTE_INSET), x1 - _scale(_NOTE_INSET)
+    nota_x = nx0 + _scale(_NOTE_TEXT_X)
+    fondo = y1 - _scale(_NOTE_INSET)
+    note = []
+    for (titolo, testo), stile in reversed(list(zip(NOTES, _note_styles()))):
+        corpo = _wrap(testo, fonts_map["note_text"], nx1 - _scale(22) - nota_x)
+        alto = _scale(_NOTE_TEXT_Y) + _scale(_NOTE_STEP) * (len(corpo) - 1) + _scale(_NOTE_BOTTOM)
+        note.append(((nx0, fondo - alto, nx1, fondo), titolo, corpo, stile))
+        fondo -= alto + _scale(_NOTE_GAP)
+    note.reverse()
+
+    cima_note = note[0][0][1] if note else y1
+    return righe, note, ultima + _scale(_BODY_STEP / 2) + _scale(16) <= cima_note
+
+
+def _draw_platform_card(img, box, fonts_map) -> None:
+    _draw_card(img, box, PLATFORM_TITLE, fonts_map)
+    righe, note, _ci_sta = _platform_layout(box, fonts_map)
+    draw = ImageDraw.Draw(img)
+    for x, y, riga in righe:
+        draw.text((x, y), riga, font=fonts_map["body"], fill=WHITE, anchor="lm")
+
+    u = _unit()
+    for (bx0, by0, bx1, by1), titolo, corpo, (forma, colore, bordo) in note:
+        glow_box(img, (bx0, by0, bx1, by1), radius=10 * u, edge=bordo, width=2 * u,
+                 fill=_NOTE_BG, glow=5 * u, glow_alpha=90)
+        draw = ImageDraw.Draw(img)
+        cy = (by0 + by1) / 2
+        icona_x = bx0 + _scale(_NOTE_ICON_X)
+        if forma == "warn":
+            _draw_warn_icon(draw, icona_x, cy, _scale(46), colore)
+        else:
+            _draw_info_icon(draw, icona_x, cy, _scale(46), colore, fonts_map["info"])
+        linea_x = bx0 + _scale(_NOTE_RULE_X)
+        mezza = (by1 - by0) / 2 - _scale(18)
+        draw.line((linea_x, cy - mezza, linea_x, cy + mezza), fill=colore,
+                  width=max(1, round(2.4 * u)))
+        testo_x = bx0 + _scale(_NOTE_TEXT_X)
+        draw.text((testo_x, by0 + _scale(_NOTE_TITLE_Y)), titolo, font=fonts_map["note_label"],
+                  fill=colore, anchor="lm")
+        for n, riga in enumerate(corpo):
+            draw.text((testo_x, by0 + _scale(_NOTE_TEXT_Y) + _scale(_NOTE_STEP) * n), riga,
+                      font=fonts_map["note_text"], fill=WHITE, anchor="lm")
+
+
+def _only_glyphs(righe) -> bool:
+    return all(lato is None and nome in _GLYPH_COLORS for nome, _azione, lato in righe)
+
+
+def _commands_layout(box, fonts_map):
+    x0, y0, x1, y1 = box
+    colonna = x0 + _scale(34)
+    raggio = _scale(21)
     gruppi = joystick_action_groups()
     assi = joystick_axis_details()
-    colonna = x0 + _scale(30)
-    raggio, larghezza_tasto, colonna_nome, colonna_azione = _command_columns(
-        colonna, fonts_map, gruppi, assi,
-    )
-    azione_max_w = x1 - _scale(30) - colonna_azione
-    altezza_azione = _scale(26)
 
-    y = y0 + _scale(86)
-    for sezione, righe in gruppi:
-        draw.text((colonna, y), sezione, font=fonts_map["section"], fill=_MUTED, anchor="lm")
-        y += _scale(26)
-        for tasto, azione in righe:
-            testo = _wrap(azione, fonts_map["action"], azione_max_w)
-            extra = altezza_azione * (len(testo) - 1)
-            y += extra // 2
-            forma = _GLYPH_COLORS.get(tasto)
-            if forma is None:
-                _draw_key(draw, colonna, y, tasto, fonts_map["key"], larghezza_tasto)
-            else:
-                _draw_glyph(draw, forma[0], forma[1], colonna + raggio, y, raggio)
-                draw.text((colonna_nome, y), tasto, font=fonts_map["name"],
-                          fill=_TEXT, anchor="lm")
-            ay = y - extra // 2
-            for riga in testo:
-                draw.text((colonna_azione, ay), riga, font=fonts_map["action"],
-                          fill=_SOFT, anchor="lm")
-                ay += altezza_azione
-            y += _scale(38) + extra - extra // 2
-        y += _scale(6)
+    tasti = [tasto for _sezione, righe in gruppi for tasto, _azione in righe]
+    chiavi = [tasto for tasto in tasti if tasto not in _GLYPH_COLORS]
+    pastiglia_w = max(
+        [int(fonts_map["key"].getlength(tasto)) + _scale(28) for tasto in chiavi]
+        + [2 * raggio]
+    )
+    pastiglia_h = _scale(36)
+    nome_x = colonna + 2 * raggio + _scale(14)
+    fine_nomi = max(
+        [colonna + pastiglia_w]
+        + [nome_x + fonts_map["name"].getlength(f"+ {verso}") for _lato, verso, _azione in assi]
+    )
+    azione_x = int(fine_nomi) + _scale(36)
+    azione_w = x1 - _scale(30) - azione_x
 
-    y += _scale(2)
-    draw.line((colonna, y, x1 - _scale(30), y), fill=(48, 53, 66), width=_scale(1))
-    y += _scale(22)
-    draw.text((colonna, y), AXES_TITLE, font=fonts_map["section"], fill=_MUTED, anchor="lm")
-    y += _scale(28)
-    for lato, verso, azione in assi:
-        _draw_stick(draw, verso, colonna + raggio, y, raggio)
-        draw.text((colonna_nome - _scale(16), y), lato, font=fonts_map["tiny"],
-                  fill=_MUTED, anchor="rm")
-        draw.text((colonna_nome, y), verso, font=fonts_map["name"], fill=_TEXT, anchor="lm")
-        draw.text((colonna_azione, y), azione, font=fonts_map["action"], fill=_SOFT, anchor="lm")
-        y += _scale(38)
+    sezioni = [[(t, a, None) for t, a in righe] for _sezione, righe in gruppi[:-1]]
+    sezioni.append([(f"+ {verso}", azione, lato) for lato, verso, azione in assi])
+    sezioni += [[(t, a, None) for t, a in righe] for _sezione, righe in gruppi[-1:]]
+
+    elementi = []
+    y = y0 + _scale(_ROWS_TOP)
+    ultima = y
+    precedente = None
+    for righe in sezioni:
+        if precedente is not None:
+            stretto = _only_glyphs(precedente) and _only_glyphs(righe)
+            y += _scale(_GLYPH_GAP if stretto else _GROUP_GAP)
+        for nome, azione, lato in righe:
+            linee = _wrap(azione, fonts_map["action"], azione_w)
+            extra = _scale(_ACTION_STEP) * (len(linee) - 1)
+            cy = y + extra / 2
+            elementi.append((cy, nome, linee, lato))
+            ultima = cy + extra / 2
+            y += _scale(_ROW_STEP) + extra
+        precedente = righe
+
+    colonne = {
+        "colonna": colonna,
+        "raggio": raggio,
+        "pastiglia": (pastiglia_w, pastiglia_h),
+        "nome_x": nome_x,
+        "azione_x": azione_x,
+    }
+    return elementi, colonne, ultima + raggio + _scale(18) <= y1
 
 
-def _draw_buttons(draw, start_rect, exit_rect, start_hover, exit_hover, font) -> None:
-    SS = _SUPERSAMPLE
-    draw.rounded_rectangle(
-        [exit_rect.x * SS, exit_rect.y * SS, exit_rect.right * SS, exit_rect.bottom * SS],
-        radius=_scale(10),
-        fill=(240, 242, 246) if exit_hover else (255, 255, 255),
-        outline=(24, 28, 36), width=_scale(2),
-    )
-    draw.text(
-        ((exit_rect.x + exit_rect.width / 2) * SS, (exit_rect.y + exit_rect.height / 2) * SS),
-        exit_label(), font=font, fill=_INK, anchor="mm",
-    )
-    draw.rounded_rectangle(
-        [start_rect.x * SS, start_rect.y * SS, start_rect.right * SS, start_rect.bottom * SS],
-        radius=_scale(10),
-        fill=(34, 39, 50) if start_hover else _CARD_BG,
-    )
-    draw.text(
-        ((start_rect.x + start_rect.width / 2) * SS, (start_rect.y + start_rect.height / 2) * SS),
-        start_label(), font=font, fill=(255, 255, 255), anchor="mm",
-    )
+def _draw_commands_card(img, box, fonts_map) -> None:
+    _draw_card(img, box, COMMANDS_TITLE, fonts_map)
+    elementi, c, _ci_sta = _commands_layout(box, fonts_map)
+    colonna, raggio = c["colonna"], c["raggio"]
+    glifo_x = colonna + raggio
+    for cy, nome, linee, lato in elementi:
+        if lato is not None:
+            _draw_stick(img, lato, glifo_x, cy, raggio, fonts_map["stick"])
+            ImageDraw.Draw(img).text((c["nome_x"], cy), nome, font=fonts_map["name"],
+                                     fill=WHITE, anchor="lm")
+        elif nome in _GLYPH_COLORS:
+            forma, colore = _GLYPH_COLORS[nome]
+            _draw_glyph(img, forma, colore, glifo_x, cy, raggio)
+        else:
+            _draw_key(img, colonna, cy, c["pastiglia"][0], c["pastiglia"][1], nome,
+                      fonts_map["key"])
+        draw = ImageDraw.Draw(img)
+        ay = cy - _scale(_ACTION_STEP) * (len(linee) - 1) / 2
+        for linea in linee:
+            draw.text((c["azione_x"], ay), linea, font=fonts_map["action"],
+                      fill=WHITE, anchor="lm")
+            ay += _scale(_ACTION_STEP)
 
 
 def _fonts_map():
     S = _scale
     return {
-        "card": fonts.sans_bold(S(26)),
-        "body": fonts.sans(S(20)),
+        "card": fonts.sans_bold(S(34)),
+        "body": fonts.sans(S(23)),
         "key": fonts.sans_bold(S(18)),
-        "name": fonts.sans_bold(S(19)),
-        "action": fonts.sans(S(19)),
-        "section": fonts.sans_bold(S(16)),
-        "tiny": fonts.sans_bold(S(15)),
-        "note_label": fonts.sans_bold(S(16)),
-        "note_text": fonts.sans(S(18)),
-        "chip": fonts.sans_bold(S(19)),
-        "button": fonts.sans_bold(S(23)),
-        "subtitle": fonts.sans(S(24)),
+        "name": fonts.sans_bold(S(23)),
+        "action": fonts.sans(S(23)),
+        "stick": fonts.sans_bold(S(19)),
+        "note_label": fonts.sans_bold(S(21)),
+        "note_text": fonts.sans(S(21)),
+        "info": fonts.sans_bold(S(29)),
+        "chip": fonts.sans_bold(S(25)),
+        "button": fonts.sans_bold(S(25)),
+        "fallback_title": fonts.sans_bold(S(46)),
     }
 
 
-def _geometry(width, height, fonts_map, buttons_top):
-    W, H = width * _SUPERSAMPLE, height * _SUPERSAMPLE
-    larghezza_banner = min(_scale(_BANNER_WIDTH), int(W * 0.34))
-    alto_banner = _scale(22)
-    fondo_banner = alto_banner + _banner_height(larghezza_banner)
-    sotto_banner = fondo_banner + _scale(14)
-
-    top = sotto_banner + sum(fonts_map["subtitle"].getmetrics()) + _scale(26)
-    bottom = buttons_top * _SUPERSAMPLE - _scale(26)
-    margine = _scale(48) + int((W - 2 * _scale(48)) * 0.008)
-    gap = _scale(26)
-    disponibile = W - 2 * margine - gap
-    larghezza = int(disponibile * 0.56)
-
+def _geometry(width, height, exit_rect, start_rect):
+    SS = _SUPERSAMPLE
+    k = _base_layout_scale(width, height)
+    W = width * SS
+    sinistra_x = exit_rect.x * SS
+    destra_x = start_rect.right * SS
+    linea = (exit_rect.y - int(round(28 * k))) * SS
+    banner_top = _scale(30)
+    banner_bottom = banner_top + _scale(212)
+    gap = _scale(20)
+    disponibile = destra_x - sinistra_x - gap
+    sinistra = int(disponibile * _LEFT_SHARE)
     return {
-        "banner_width": larghezza_banner,
-        "banner_top": alto_banner,
-        "subtitle_y": sotto_banner,
-        "top": top,
-        "bottom": bottom,
-        "margine": margine,
+        "W": W,
+        "banner": (sinistra_x, banner_top, destra_x, banner_bottom),
+        "top": banner_bottom + _scale(22),
+        "bottom": linea - int(round(24 * k)) * SS,
+        "rule": linea,
+        "x0": sinistra_x,
+        "x1": destra_x,
         "gap": gap,
-        "sinistra": larghezza,
-        "destra": disponibile - larghezza,
+        "sinistra": sinistra,
     }
+
+
+def _card_boxes(geometria):
+    x0, top, bottom = geometria["x0"], geometria["top"], geometria["bottom"]
+    sinistra = (x0, top, x0 + geometria["sinistra"], bottom)
+    destra = (x0 + geometria["sinistra"] + geometria["gap"], top, geometria["x1"], bottom)
+    return sinistra, destra
 
 
 def _layout_fits(geometria, fonts_map) -> bool:
-    altezza = geometria["bottom"] - geometria["top"]
-    if altezza <= 0:
+    if geometria["bottom"] - geometria["top"] <= 0:
         return False
+    sinistra, destra = _card_boxes(geometria)
     return (
-        _platform_height(geometria["sinistra"], fonts_map) <= altezza
-        and _commands_height(geometria["destra"], fonts_map) <= altezza
+        _platform_layout(sinistra, fonts_map)[2]
+        and _commands_layout(destra, fonts_map)[2]
     )
 
 
-def _fit_layout(width: int, height: int, buttons_top: int):
+def _fit_layout(width: int, height: int, exit_rect, start_rect):
     global _LAYOUT_SCALE
 
     base = _base_layout_scale(width, height)
     fonts_map = None
     geometria = None
-    for tentativo in range(6):
+    for tentativo in range(_FIT_ATTEMPTS):
         _LAYOUT_SCALE = base * (0.94 ** tentativo)
         fonts_map = _fonts_map()
-        geometria = _geometry(width, height, fonts_map, buttons_top)
+        geometria = _geometry(width, height, exit_rect, start_rect)
         if _layout_fits(geometria, fonts_map):
             break
     return fonts_map, geometria
@@ -525,52 +580,48 @@ def _fit_layout(width: int, height: int, buttons_top: int):
 def button_rects(width: int, height: int):
     k = _base_layout_scale(width, height)
     larghezza = int(round(250 * k))
-    altezza = int(round(54 * k))
-    margine = int(round(32 * k))
-    stacco = int(round(20 * k))
-    y = height - altezza - int(round(22 * k))
+    altezza = int(round(60 * k))
+    margine = int(round(48 * k))
+    y = height - altezza - int(round(28 * k))
     start_rect = pygame.Rect(width - margine - larghezza, y, larghezza, altezza)
-    exit_rect = pygame.Rect(start_rect.x - stacco - larghezza, y, larghezza, altezza)
+    exit_rect = pygame.Rect(margine, y, larghezza, altezza)
     return start_rect, exit_rect
+
+
+def _rect_box(rect):
+    SS = _SUPERSAMPLE
+    return (rect.x * SS, rect.y * SS, rect.right * SS, rect.bottom * SS)
 
 
 def _render_welcome_screen(width, height, *, focused, start_rect, exit_rect,
                            start_hover, exit_hover):
-    S = _scale
-    W, H = width * _SUPERSAMPLE, height * _SUPERSAMPLE
+    SS = _SUPERSAMPLE
+    W, H = width * SS, height * SS
 
-    fonts_map, geometria = _fit_layout(width, height, exit_rect.y)
+    fonts_map, geometria = _fit_layout(width, height, exit_rect, start_rect)
+    u = _unit()
 
-    img = _background(W, H)
-    fondo_banner = _draw_logo(
-        img, W // 2, geometria["banner_top"], geometria["banner_width"],
-    )
+    img = grid_background(W, H, _scale(64), _scale(6))
+    _draw_banner(img, geometria["banner"], fonts_map)
+
+    sinistra, destra = _card_boxes(geometria)
+    _draw_platform_card(img, sinistra, fonts_map)
+    _draw_commands_card(img, destra, fonts_map)
+
     draw = ImageDraw.Draw(img)
-
-    draw.text((W // 2, geometria["subtitle_y"]), SUBTITLE, font=fonts_map["subtitle"],
-              fill=_INK_SOFT, anchor="mt")
-
-    margine = geometria["margine"]
-    top = geometria["top"]
-    bottom = geometria["bottom"]
-    larghezza = geometria["sinistra"]
-
-    _draw_platform_card(img, draw, (margine, top, margine + larghezza, bottom), fonts_map)
-    _draw_commands_card(
-        img, draw,
-        (margine + larghezza + geometria["gap"], top, W - margine, bottom), fonts_map,
-    )
-
-    linea = int((exit_rect.y - 12) * _SUPERSAMPLE)
-    draw.line((margine, linea, W - margine, linea), fill=(223, 227, 235), width=S(1))
+    draw.line((geometria["x0"], geometria["rule"], geometria["x1"], geometria["rule"]),
+              fill=FOOTER_RULE, width=max(1, round(1.3 * u)))
     if not focused:
         draw.text(
-            (margine, int((exit_rect.y + exit_rect.height / 2) * _SUPERSAMPLE)),
-            NOT_FOCUSED_NOTE, font=fonts_map["chip"], fill=(176, 122, 22), anchor="lm",
+            (W // 2, int((exit_rect.y + exit_rect.height / 2) * SS)),
+            NOT_FOCUSED_NOTE, font=fonts_map["chip"], fill=_NOT_FOCUSED, anchor="mm",
         )
-    _draw_buttons(draw, start_rect, exit_rect, start_hover, exit_hover, fonts_map["button"])
+    draw_hover_button(img, _rect_box(exit_rect), exit_label(), fonts_map["button"],
+                      unit=u, hover=exit_hover)
+    draw_hover_button(img, _rect_box(start_rect), start_label(), fonts_map["button"],
+                      unit=u, hover=start_hover)
 
-    final = img.convert("RGB").resize((width, height), Image.LANCZOS)
+    final = img.resize((width, height), Image.LANCZOS)
     return pygame.image.frombytes(final.tobytes(), final.size, "RGB").convert()
 
 

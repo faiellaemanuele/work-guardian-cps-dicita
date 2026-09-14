@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from drone.ui import fonts
+from drone.ui.shapes import glow_box, paint_supersampled
 
 
 _AUTOPILOT_REASON_LABELS: dict[str, str] = {
@@ -53,24 +54,29 @@ def _status_label_widths(labels: tuple[str, ...], size: int) -> int:
     return max_w
 
 
-_PANEL_BG = (22, 22, 26)
-_PANEL_ALPHA = 160
+_PANEL_BG = (3, 27, 45)
+_PANEL_ALPHA = 218
 _PANEL_SUPERSAMPLE = 3
 _STATUS_PANEL_SCALE = 1.3
 
-_PANEL_BORDER = (235, 240, 242, 110)
+_PANEL_EDGE = (4, 180, 236)
+_PANEL_EDGE_W = 1.6
+_PANEL_RADIUS = 8
+_PANEL_GLOW = 4
+_PANEL_GLOW_ALPHA = 150
+_PANEL_ICON_SCALE = 1.12
+_PANEL_ICON_HALF = 11
 
-_STATUS_ON = (90, 205, 95)
-_STATUS_OFF = (235, 95, 80)
-_LABEL_ON = (222, 240, 224)
-_LABEL_OFF = (232, 176, 166)
-_BATT_SEPARATOR = (78, 78, 82)
+_STATUS_ON = (8, 240, 150)
+_STATUS_OFF = (252, 98, 88)
+_LABEL = (206, 244, 252)
+_BATT_SEPARATOR = (4, 88, 138)
 
-_BATT_GREEN = (90, 205, 95)
-_BATT_AMBER = (235, 180, 40)
-_BATT_RED = (235, 95, 80)
-_BATT_UNKNOWN = (130, 130, 130)
-_BATT_OUTLINE = (200, 200, 200)
+_BATT_GREEN = (84, 250, 150)
+_BATT_AMBER = (252, 190, 16)
+_BATT_RED = (252, 98, 88)
+_BATT_UNKNOWN = (130, 140, 150)
+_BATT_OUTLINE = (196, 236, 248)
 
 
 def _battery_color(pct):
@@ -81,10 +87,6 @@ def _battery_color(pct):
     if pct >= 20:
         return _BATT_AMBER
     return _BATT_RED
-
-
-def _lighten(color, factor=0.5):
-    return tuple(int(c + (255 - c) * factor) for c in color[:3])
 
 
 def _icon_stroke(s):
@@ -152,7 +154,7 @@ def _pi_pin(draw, cx, cy, s, color):
 
 def _pi_battery_gauge(draw, x, cy, w_base, pct, s):
     h = 13 * s
-    y1 = cy - h // 2
+    y1 = cy - h / 2
     body_w = (w_base - 4) * s
     x2 = x + body_w
     ow = max(1, round(1.2 * s))
@@ -188,27 +190,27 @@ _PANEL_LABEL_PX = 16
 _PANEL_TITLE_PX = 17
 _PANEL_TITLE_H = 24
 _PANEL_TITLE_GAP = 8
-_PANEL_TITLE_COLOR = (236, 242, 246)
+_PANEL_TITLE_COLOR = (248, 251, 252)
 _PANEL_X0, _PANEL_Y0 = 10, 10
-_PANEL_PX = 14
+_PANEL_PX = 16
 _PANEL_ICON_W = 18
-_PANEL_GAP = 9
+_PANEL_GAP = 11
 _PANEL_ROW_H = 29
 _PANEL_SEP_GAP = 6
 _PANEL_PAD_TOP, _PANEL_PAD_BOTTOM = 8, 12
-_PANEL_GAUGE_W = 36
+_PANEL_GAUGE_W = 38
 
 DRONE_PANEL_TITLE = "Stato drone"
 WATCH_PANEL_TITLE = "Stato orologio"
 
 _PANEL_LABELS = ("Connesso", "Joystick", "In volo", "Supervisione", "Autopilota")
-_WATCH_LABELS = ("Connessione",)
+_WATCH_LABELS = ("Connesso",)
 
 
 def _panel_base_width(labels: tuple[str, ...], title: str, batt_text: str) -> int:
     text_x = _PANEL_PX + _PANEL_ICON_W + _PANEL_GAP
     max_label_w = _status_label_widths(labels, _PANEL_LABEL_PX)
-    pct_w = int(round(fonts.sans(_PANEL_LABEL_PX + 2).getlength(batt_text)))
+    pct_w = int(round(fonts.sans_bold(_PANEL_LABEL_PX + 1).getlength(batt_text)))
     title_w = int(round(fonts.sans_bold(_PANEL_TITLE_PX).getlength(title)))
     body_row_w = text_x + max_label_w + _PANEL_PX
     batt_row_w = _PANEL_PX + _PANEL_GAUGE_W + _PANEL_GAP + pct_w + _PANEL_PX
@@ -230,14 +232,20 @@ def _panel_base_height(rows: int) -> int:
     )
 
 
+def _glow_px() -> int:
+    return int(round(_PANEL_GLOW * _STATUS_PANEL_SCALE))
+
+
+def _panel_image_width() -> int:
+    return int(round((_panels_base_width() + 2 * _PANEL_GLOW) * _STATUS_PANEL_SCALE))
+
+
 def status_panel_right_edge() -> int:
-    width = _panels_base_width() * _STATUS_PANEL_SCALE
-    return _PANEL_X0 + int(round(width))
+    return _PANEL_X0 - _glow_px() + _panel_image_width()
 
 
 def watch_panel_left_edge(frame_width: int) -> int:
-    width = _panels_base_width() * _STATUS_PANEL_SCALE
-    return int(frame_width) - _PANEL_X0 - int(round(width))
+    return int(frame_width) - _PANEL_X0 + _glow_px() - _panel_image_width()
 
 
 _STATUS_PANEL_CACHE: dict[tuple, "Image.Image"] = {}
@@ -263,7 +271,7 @@ def _build_status_panel(
 def _build_watch_panel(connected, batt_v):
     return _build_panel(
         WATCH_PANEL_TITLE,
-        [("Connessione", bool(connected), _pi_wifi)],
+        [("Connesso", bool(connected), _pi_wifi)],
         batt_v,
     )
 
@@ -271,69 +279,65 @@ def _build_watch_panel(connected, batt_v):
 def _build_panel(title, status_rows, batt_v):
     batt_text = "--" if batt_v is None else f"{int(batt_v)}%"
 
-    label_px = _PANEL_LABEL_PX
-    px     = _PANEL_PX
-    icon_w = _PANEL_ICON_W
-    gap    = _PANEL_GAP
-    rh     = _PANEL_ROW_H
-    sep_gap = _PANEL_SEP_GAP
-    text_x = px + icon_w + gap
-    pad_top, pad_bottom = _PANEL_PAD_TOP, _PANEL_PAD_BOTTOM
-    gauge_w = _PANEL_GAUGE_W
-
-    bg_w = _panels_base_width(batt_text)
+    ss = _PANEL_SUPERSAMPLE
+    g = _PANEL_GLOW
+    bg_w = _panels_base_width()
     bg_h = _panel_base_height(len(status_rows))
 
-    ss = _PANEL_SUPERSAMPLE
-    img = Image.new("RGBA", (bg_w * ss, bg_h * ss), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    font_label = fonts.sans(label_px * ss)
-
-    radius = 10 * ss
-    draw.rounded_rectangle(
-        (0, 0, bg_w * ss - 1, bg_h * ss - 1), radius=radius,
-        fill=(*_PANEL_BG, _PANEL_ALPHA),
+    img = Image.new("RGBA", ((bg_w + 2 * g) * ss, (bg_h + 2 * g) * ss), (0, 0, 0, 0))
+    glow_box(
+        img, (g * ss, g * ss, (g + bg_w) * ss - 1, (g + bg_h) * ss - 1),
+        radius=_PANEL_RADIUS * ss, edge=_PANEL_EDGE, width=_PANEL_EDGE_W * ss,
+        fill=(*_PANEL_BG, _PANEL_ALPHA), glow=g * ss / 3, glow_alpha=_PANEL_GLOW_ALPHA,
     )
+    draw = ImageDraw.Draw(img)
+    font_label = fonts.sans(_PANEL_LABEL_PX * ss)
 
-    icon_cx = (px + icon_w // 2) * ss
-    text_x_hi = text_x * ss
-    y = pad_top
+    px = g + _PANEL_PX
+    icon_cx = (px + _PANEL_ICON_W / 2) * ss
+    text_x = (px + _PANEL_ICON_W + _PANEL_GAP) * ss
+    y = g + _PANEL_PAD_TOP
 
     draw.text(
-        (px * ss, (y + _PANEL_TITLE_H // 2) * ss), title,
+        (px * ss, (y + _PANEL_TITLE_H / 2) * ss), title,
         font=fonts.sans_bold(_PANEL_TITLE_PX * ss),
         fill=_PANEL_TITLE_COLOR, anchor="lm",
     )
     y += _PANEL_TITLE_H + _PANEL_TITLE_GAP
 
+    s = ss * _PANEL_ICON_SCALE
+    half = _PANEL_ICON_HALF * s
     for label, active, draw_icon in status_rows:
-        cy = (y + rh // 2) * ss
-        draw_icon(draw, icon_cx, cy, ss, _STATUS_ON if active else _STATUS_OFF)
-        draw.text(
-            (text_x_hi, cy), label, font=font_label,
-            fill=_LABEL_ON if active else _LABEL_OFF, anchor="lm",
+        cy = (y + _PANEL_ROW_H / 2) * ss
+        color = _STATUS_ON if active else _STATUS_OFF
+        paint_supersampled(
+            img, (icon_cx - half, cy - half, icon_cx + half, cy + half), (icon_cx, cy),
+            lambda d, x, yy, k, draw_icon=draw_icon, color=color: draw_icon(d, x, yy, s * k, color),
         )
-        y += rh
+        draw.text((text_x, cy), label, font=font_label, fill=_LABEL, anchor="lm")
+        y += _PANEL_ROW_H
 
-    sep_y = (y + sep_gap // 2) * ss
-    draw.line((px * ss, sep_y, (bg_w - px) * ss, sep_y), fill=_BATT_SEPARATOR, width=max(1, ss))
-    y += sep_gap
-    cy = (y + rh // 2) * ss
-    gauge_x = px * ss
-    _pi_battery_gauge(draw, gauge_x, cy, gauge_w, batt_v, ss)
-    draw.text(
-        ((px + gauge_w + gap) * ss, cy),
-        batt_text, font=fonts.sans((label_px + 2) * ss),
-        fill=_lighten(_battery_color(batt_v), 0.45), anchor="lm",
+    sep_y = (y + _PANEL_SEP_GAP / 2) * ss
+    draw.line(
+        (px * ss, sep_y, (g + bg_w - _PANEL_PX) * ss, sep_y),
+        fill=_BATT_SEPARATOR, width=max(1, ss),
     )
-
-    draw.rounded_rectangle(
-        (0, 0, bg_w * ss - 1, bg_h * ss - 1), radius=radius,
-        outline=_PANEL_BORDER, width=max(1, ss),
+    y += _PANEL_SEP_GAP
+    cy = (y + _PANEL_ROW_H / 2) * ss
+    gauge_half_h = 8 * ss
+    paint_supersampled(
+        img, ((px - 1) * ss, cy - gauge_half_h, (px + _PANEL_GAUGE_W + 1) * ss, cy + gauge_half_h),
+        (px * ss, cy),
+        lambda d, x, yy, k: _pi_battery_gauge(d, x, yy, _PANEL_GAUGE_W, batt_v, ss * k),
+    )
+    draw.text(
+        ((px + _PANEL_GAUGE_W + _PANEL_GAP) * ss, cy),
+        batt_text, font=fonts.sans_bold((_PANEL_LABEL_PX + 1) * ss),
+        fill=_battery_color(batt_v), anchor="lm",
     )
 
     return img.resize(
-        (round(bg_w * _STATUS_PANEL_SCALE), round(bg_h * _STATUS_PANEL_SCALE)),
+        (_panel_image_width(), int(round((bg_h + 2 * g) * _STATUS_PANEL_SCALE))),
         Image.LANCZOS,
     )
 
@@ -362,7 +366,7 @@ def draw_status_overlay(
         _STATUS_PANEL_CACHE.clear()
         _STATUS_PANEL_CACHE[key] = panel
 
-    _composite_rgba(frame, _PANEL_X0, _PANEL_Y0, panel)
+    _composite_rgba(frame, _PANEL_X0 - _glow_px(), _PANEL_Y0 - _glow_px(), panel)
 
 
 SCENARIO_HINT_TEXT = "torna alla scelta dello scenario"
@@ -372,10 +376,11 @@ _HINT_H = 42
 _HINT_PAD = 16
 _HINT_GAP = 12
 _HINT_BOTTOM_GAP = 26
-_HINT_BG = (18, 20, 27, 226)
-_HINT_KEY_BG = (224, 154, 16, 255)
-_HINT_KEY_TEXT = (20, 16, 6)
-_HINT_TEXT = (232, 235, 242)
+_HINT_BG = (3, 27, 45, 226)
+_HINT_EDGE = (4, 180, 236, 235)
+_HINT_KEY_BG = (16, 226, 250, 255)
+_HINT_KEY_TEXT = (3, 20, 40)
+_HINT_TEXT = (206, 244, 252)
 
 _HINT_CACHE: dict[tuple, "Image.Image"] = {}
 
@@ -394,7 +399,7 @@ def _build_scenario_hint(key_label: str, text: str):
     draw = ImageDraw.Draw(panel)
     draw.rounded_rectangle(
         (0, 0, w - 1, h - 1), radius=h // 2,
-        fill=_HINT_BG, outline=(*_HINT_KEY_BG[:3], 235), width=ss,
+        fill=_HINT_BG, outline=_HINT_EDGE, width=ss,
     )
     cy = h // 2
     draw.rounded_rectangle(
@@ -437,15 +442,16 @@ def draw_watch_overlay(frame, watch_status=None):
         _WATCH_PANEL_CACHE.clear()
         _WATCH_PANEL_CACHE[key] = panel
 
-    x0 = frame.shape[1] - _PANEL_X0 - panel.width
-    _composite_rgba(frame, max(0, x0), _PANEL_Y0, panel)
+    x0 = frame.shape[1] - _PANEL_X0 + _glow_px() - panel.width
+    _composite_rgba(frame, max(0, x0), _PANEL_Y0 - _glow_px(), panel)
 
 
-_TITLE_PX = 34
-_TITLE_TRACKING_PX = 6
-_TITLE_Y = 16
-_TITLE_COLOR = (243, 247, 250)
-_TITLE_SHADOW_ALPHA = 150
+_TITLE_PX = 36
+_TITLE_TRACKING_PX = 0
+_TITLE_Y = 14
+_TITLE_COLOR = (3, 27, 51)
+_TITLE_HALO = (232, 246, 252)
+_TITLE_SHADOW_ALPHA = 170
 _TITLE_SHADOW_BLUR = 5
 _TITLE_BAND_H = int(_TITLE_PX * 1.55) + 2 * _TITLE_SHADOW_BLUR
 _TITLE_CACHE: dict[str, "Image.Image"] = {}
@@ -474,7 +480,9 @@ def _build_project_title(title: str):
 
     shadow = glyphs.split()[3].point(lambda a: a * _TITLE_SHADOW_ALPHA // 255)
     shadow = shadow.filter(ImageFilter.GaussianBlur(_TITLE_SHADOW_BLUR * ss))
-    img.paste(Image.new("RGBA", img.size, (0, 0, 0, 255)), (0, 0), mask=shadow)
+    halo = Image.new("RGBA", img.size, (*_TITLE_HALO, 0))
+    halo.putalpha(shadow)
+    img.alpha_composite(halo)
     img.alpha_composite(glyphs)
 
     return img.resize((img.width // ss, _TITLE_BAND_H), Image.LANCZOS)
@@ -492,10 +500,11 @@ def draw_project_title(frame, title: str):
     _composite_rgba(frame, max(0, x0), _TITLE_Y, panel)
 
 
-_BANNER_GAP = 8
-_SAFETY_NET_BANNER_W = 500
-_SAFETY_NET_BANNER_H = 68
-_SAFETY_NET_BANNER_H_ALERT = 76
+_BANNER_GAP = 10
+_SAFETY_NET_BANNER_W = 390
+_SAFETY_NET_BANNER_H = 56
+_SAFETY_NET_BANNER_H_ALERT = 62
+_SAFETY_NET_BANNER_PAD = 8
 
 
 def _banner_x(w, bw):
@@ -510,13 +519,13 @@ def _banner_y_clamped(by, bh, h):
 
 
 _SAFETY_NET_BANNER_SS = _PANEL_SUPERSAMPLE
-_SAFETY_NET_BANNER_RADIUS = 17
-_SAFETY_NET_BANNER_FONT_MAX = 30
-_SAFETY_NET_BANNER_FONT_MIN = 16
-_SAFETY_NET_BANNER_TEXT_X = 92
-_SAFETY_NET_BANNER_TEXT_PAD = 18
-_SAFETY_NET_BANNER_ICON_CX = 42
-_SAFETY_NET_BANNER_ICON_R = 18
+_SAFETY_NET_BANNER_RADIUS = 9
+_SAFETY_NET_BANNER_FONT_MAX = 23
+_SAFETY_NET_BANNER_FONT_MIN = 14
+_SAFETY_NET_BANNER_TEXT_X = 69
+_SAFETY_NET_BANNER_TEXT_PAD = 16
+_SAFETY_NET_BANNER_ICON_CX = 36
+_SAFETY_NET_BANNER_ICON_R = 13
 
 
 def _draw_safety_net_banner_icon(draw, kind, cx, cy, r, w, fill_rgb):
@@ -564,9 +573,9 @@ _SAFETY_NET_BANNER_TITLES = {
 }
 
 _SAFETY_NET_BANNER_STYLE = {
-    "present": ((46, 160, 84),  (158, 226, 176), "check"),
-    "missing": ((214, 60, 55),  (255, 214, 210), "warn"),
-    "no_tags": ((84, 94, 110),  (176, 188, 205), "quest"),
+    "present": ((10, 104, 58), (64, 232, 150), "check"),
+    "missing": ((150, 30, 36), (255, 128, 116), "warn"),
+    "no_tags": ((40, 62, 88), (150, 176, 204), "quest"),
 }
 
 
@@ -592,44 +601,30 @@ def draw_safety_net_verdict_banner(frame, verdict):
 
 
 def _render_safety_net_banner(frame, bx, by, bw, bh, fill, edge, icon, title, is_alert):
-    h, w = frame.shape[:2]
     ss = _SAFETY_NET_BANNER_SS
-    pad = 18
-    x0, y0 = max(0, bx - pad), max(0, by - pad)
-    x1, y1 = min(w, bx + bw + pad), min(h, by + bh + pad)
-    ox, oy = bx - x0, by - y0
+    pad = _SAFETY_NET_BANNER_PAD
 
-    region = Image.fromarray(
-        cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2RGB)
-    ).convert("RGBA")
-
-    shadow = Image.new("RGBA", region.size, (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(shadow)
-    sdraw.rounded_rectangle(
-        (ox + 2, oy + 6, ox + bw + 2, oy + bh + 6),
-        radius=_SAFETY_NET_BANNER_RADIUS, fill=(0, 0, 0, 130),
+    tile = Image.new("RGBA", ((bw + 2 * pad) * ss, (bh + 2 * pad) * ss), (0, 0, 0, 0))
+    glow_box(
+        tile, (pad * ss, pad * ss, (pad + bw) * ss - 1, (pad + bh) * ss - 1),
+        radius=_SAFETY_NET_BANNER_RADIUS * ss, edge=edge,
+        width=(3.2 if is_alert else 2.4) * ss, fill=(*fill, 246),
+        glow=pad * ss / 3, glow_alpha=150 if is_alert else 120,
     )
-    region = Image.alpha_composite(region, shadow.filter(ImageFilter.GaussianBlur(7)))
-
-    tile = Image.new("RGBA", (bw * ss, bh * ss), (0, 0, 0, 0))
     draw = ImageDraw.Draw(tile)
-    rad = _SAFETY_NET_BANNER_RADIUS * ss
-    draw.rounded_rectangle((0, 0, bw * ss - 1, bh * ss - 1), radius=rad, fill=(*fill, 240))
-    draw.rounded_rectangle(
-        (0, 0, bw * ss - 1, bh * ss - 1), radius=rad,
-        outline=(*edge, 255), width=(3 if is_alert else 2) * ss,
-    )
-    icon_cy = (bh // 2) * ss
+    icon_cy = (pad + bh / 2) * ss
     _draw_safety_net_banner_icon(
-        draw, icon, _SAFETY_NET_BANNER_ICON_CX * ss, icon_cy,
+        draw, icon, (pad + _SAFETY_NET_BANNER_ICON_CX) * ss, icon_cy,
         _SAFETY_NET_BANNER_ICON_R * ss, max(1, round(2.6 * ss)), fill,
     )
     avail = (bw - _SAFETY_NET_BANNER_TEXT_X - _SAFETY_NET_BANNER_TEXT_PAD) * ss
     font = _fit_safety_net_banner_font(draw, title, avail)
-    _draw_banner_text_vcentered(draw, _SAFETY_NET_BANNER_TEXT_X * ss, icon_cy, title, font, anchor="lm")
+    _draw_banner_text_vcentered(
+        draw, (pad + _SAFETY_NET_BANNER_TEXT_X) * ss, icon_cy, title, font, anchor="lm",
+    )
 
-    region.alpha_composite(tile.resize((bw, bh), Image.LANCZOS), (ox, oy))
-    frame[y0:y1, x0:x1] = cv2.cvtColor(np.array(region.convert("RGB")), cv2.COLOR_RGB2BGR)
+    tile = tile.resize((bw + 2 * pad, bh + 2 * pad), Image.LANCZOS)
+    _composite_rgba(frame, max(0, bx - pad), max(0, by - pad), tile)
 
 
 def draw_cached_detections(frame, cached):

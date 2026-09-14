@@ -4,9 +4,10 @@ from collections import deque
 from typing import Optional
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 from drone.ui import fonts
+from drone.ui.shapes import glow_box, paint_supersampled
 from drone.ui.video.mission_map import (
     LEGEND_SCENE,
     LEGEND_WAYPOINTS,
@@ -17,69 +18,83 @@ from drone.ui.video.mission_map import (
 _FONT_SIZE = 18
 _LINE_H = 21
 _LOG_FONT_SIZE = 17
-_LOG_LINE_H = 21
-_HEADER_H = 32
+_LOG_LINE_H = 24
+_HEADER_TOP = 8
+_HEADER_H = 46
 _PAD = 8
-_PANEL_TEXT_PAD = 16
 
-BG = (20, 23, 30)
+BG = (3, 27, 51)
 
-_HEADER_BG = (38, 40, 46)
-_ACCENT = (120, 210, 230)
-_TEXT = (208, 212, 220)
-_MUTED = (140, 146, 158)
-_FRAME = (70, 74, 84)
-_POS = (61, 200, 132)
-_NEG = (235, 95, 80)
-
-_WARN = (235, 180, 40)
+_HEADER_SEPARATOR = (4, 110, 170)
+_TITLE_ACCENT = (150, 238, 252)
+_ACCENT = (110, 238, 252)
+_TEXT = (232, 242, 250)
+_LABEL = (206, 244, 252)
+_MUTED = (140, 162, 182)
+_WHITE = (248, 251, 252)
+_POS = (88, 226, 120)
+_NEG = (252, 98, 88)
+_WARN = (252, 190, 16)
 
 _MESSAGE_COLUMN = 13
 
-_MAP_PAD = 12
-_FLOAT_INSET = 14
-_FLOAT_BG = (17, 19, 25)
-_FLOAT_BORDER = (44, 44, 51)
-_FLOAT_RADIUS = 9
-_FLOAT_DIVIDER = (35, 35, 41)
+_MAP_LEFT = 20
+_MAP_BORDER = (150, 166, 186)
+_RAIL_RIGHT = 13
+_RAIL_MAP_GAP = 12
+_RAIL_GAP = 12
+_TIMER_H = 61
 
-_SHADOW_COLOR = (0, 0, 0)
-_SHADOW_OFFSET_Y = 6
-_SHADOW_BLUR = 9
-_SHADOW_ALPHA = 105
+_CARD_FILL = (3, 26, 50)
+_CARD_EDGE = (6, 160, 230)
+_CARD_RADIUS = 9
+_CARD_EDGE_W = 2
+_CARD_GLOW = 5
+_CARD_GLOW_ALPHA = 120
+_CARD_PAD_X = 18
+_DIVIDER = (26, 96, 146)
 
-_RAIL_GAP = 24
-_TIMER_H = 54
+_LOG_FILL = (3, 27, 48)
+_LOG_EDGE = (4, 150, 225)
+_LOG_RULE = (4, 104, 156)
+_LOG_TITLE_Y = 23
+_LOG_RULE_Y = 43
+_LOG_TEXT_TOP = 51
+_LOG_TEXT_PAD = 11
 
-_CARD_PAD_X = _PANEL_TEXT_PAD
-_CARD_PAD_Y = 5
-_AXIS_PAD_Y = 14
-_AXIS_NAME_H = 28
-_AXIS_NAME_GAP = 10
-_AXIS_LINE_H = 26
+LOG_INSET_LEFT = (_MAP_LEFT, 2, 5, 14)
+LOG_INSET_RIGHT = (5, 2, _RAIL_RIGHT, 14)
 
-_AXIS_NAME = (237, 239, 240)
-_PILL_OK_BG = (24, 45, 37)
-_PILL_BAD_BG = (50, 29, 29)
-_PILL_PAD_X = 11
-_PILL_H = 26
+_AXIS_BLOCK_H = 126
+_AXIS_NAME_Y = 33
+_AXIS_LINE_Y = (73, 103)
+_PILL_TOP = 16
+_PILL_H = 34
+_PILL_PAD_X = 20
+_PILL_OK_BG = (5, 68, 50)
+_PILL_OK_EDGE = (24, 172, 102)
+_PILL_OK_TEXT = (156, 246, 188)
+_PILL_BAD_BG = (54, 30, 44)
+_PILL_BAD_EDGE = (214, 52, 58)
+_PILL_BAD_TEXT = (252, 142, 124)
 
-_FONT_MAP = 18
-_FONT_TIMER = 17
-_FONT_PILL = 16
-_FONT_KV_LABEL = 15
-_FONT_KV_VALUE = 17
+_FONT_HEADER = 21
+_FONT_CARD_TITLE = 22
+_FONT_AXIS = 23
+_FONT_PILL = 19
+_FONT_KV = 20
 
-_DISCLAIMER_FONT = 15
-_DISCLAIMER_LINE_H = 19
+_DISCLAIMER_FONT = 17
+_DISCLAIMER_LINE_H = 20
+_DISCLAIMER_GAP = 10
 
-_LEGEND_FONT = 15
-_LEGEND_SWATCH = 13
+_LEGEND_FONT = 16
+_LEGEND_SWATCH = 16
 _LEGEND_SWATCH_GAP = 10
 _LEGEND_ROW_H = 27
-_LEGEND_PAD_X = _PANEL_TEXT_PAD
-_LEGEND_PAD_Y = 12
-_LEGEND_COL_GAP = 20
+_LEGEND_PAD_X = 16
+_LEGEND_PAD_Y = 15
+_LEGEND_COL_GAP = 14
 
 TOLERANCE_PILL_OK = "waypoint raggiunto"
 TOLERANCE_PILL_BAD = "correzione in corso"
@@ -97,8 +112,8 @@ SUPERVISION_LABEL = "Timer di supervisione"
 MISSION_FINISHED_LABEL = "Missione completata"
 
 MAP_DISCLAIMER = (
-    "* soglia di tolleranza: soglia in m/\u00b0 al di sotto della quale "
-    "il waypoint \u00e8 considerato raggiunto"
+    "* soglia di tolleranza: soglia in metri o gradi al di sotto della quale "
+    "il waypoint è considerato raggiunto"
 )
 
 _NO_MISSION_NOTE = "Nessun percorso caricato: non c'è una rotta da mostrare, il volo prosegue in manuale."
@@ -106,48 +121,20 @@ _NO_MISSION_NOTE = "Nessun percorso caricato: non c'è una rotta da mostrare, il
 _IDLE_NOTE = "Questo pannello si attiva con il volo autonomo."
 
 
-_SHADOW_CACHE: dict[tuple, "Image.Image"] = {}
-
-
-def _shadow_mask(size: tuple[int, int], radius: int, blur: int, offset_y: int, alpha: int):
-    key = (size, radius, blur, offset_y, alpha)
-    mask = _SHADOW_CACHE.get(key)
-    if mask is None:
-        box_w, box_h = size
-        pad = blur * 3
-        layer = Image.new("L", (box_w + 2 * pad, box_h + 2 * pad + offset_y), 0)
-        ImageDraw.Draw(layer).rounded_rectangle(
-            (pad, pad + offset_y, pad + box_w, pad + offset_y + box_h),
-            radius=radius, fill=alpha,
-        )
-        mask = layer.filter(ImageFilter.GaussianBlur(blur))
-        _SHADOW_CACHE[key] = mask
-    return mask
-
-
 def _finalize(img: "Image.Image") -> np.ndarray:
     return np.array(img)[:, :, ::-1].copy()
 
 
-def _new_canvas(config, title: str, height: int, secondary: Optional[str] = None,
-                title_x: Optional[int] = None, width: Optional[int] = None):
-    w = int(width) if width else int(getattr(config, "panel_width", 940))
-    h = int(height)
-    img = Image.new("RGB", (w, h), BG)
-    draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, w, _HEADER_H], fill=_HEADER_BG)
-    font = fonts.sans(_FONT_SIZE)
+def _new_canvas(width: int, height: int):
+    img = Image.new("RGB", (int(width), int(height)), BG)
+    return img, ImageDraw.Draw(img)
 
-    x, y = (_PAD if title_x is None else int(title_x)), _HEADER_H / 2
-    draw.text((x, y), title, font=font, fill=_ACCENT, anchor="lm")
-    if secondary:
-        sep = "  |  "
-        x += draw.textlength(title, font=font)
-        draw.text((x, y), sep, font=font, fill=_FRAME, anchor="lm")
-        x += draw.textlength(sep, font=font)
-        secondary = _truncate_to_width(secondary, font, w - _PAD - x)
-        draw.text((x, y), secondary, font=font, fill=_TEXT, anchor="lm")
-    return img, draw
+
+def _card_box(img, box, fill=_CARD_FILL, edge=_CARD_EDGE) -> None:
+    glow_box(
+        img, box, radius=_CARD_RADIUS, edge=edge, width=_CARD_EDGE_W, fill=fill,
+        glow=_CARD_GLOW, glow_alpha=_CARD_GLOW_ALPHA,
+    )
 
 
 def _truncate_to_width(text: str, font, max_px: float) -> str:
@@ -192,6 +179,21 @@ def _wrap_text(text: str, max_chars: int) -> list[str]:
     return out
 
 
+def _wrap_px(text: str, font, max_px: float) -> list[str]:
+    righe: list[str] = []
+    riga = ""
+    for parola in text.split():
+        prova = f"{riga} {parola}".strip()
+        if font.getlength(prova) <= max_px or not riga:
+            riga = prova
+        else:
+            righe.append(riga)
+            riga = parola
+    if riga:
+        righe.append(riga)
+    return righe
+
+
 def _layout_log_line(line: str, max_chars: int) -> list[tuple[str, bool]]:
     line = str(line)
     if len(line) <= max_chars:
@@ -207,35 +209,29 @@ def _layout_log_line(line: str, max_chars: int) -> list[tuple[str, bool]]:
     return [(head + pieces[0], False)] + [(piece, True) for piece in pieces[1:]]
 
 
-def _draw_lines(draw, lines, top: int, panel_h: int, panel_w: int,
-                color=None, line_color=None) -> None:
-    bottom = panel_h - _PAD
-    max_visible = max(0, (bottom - top) // _LOG_LINE_H)
+def _draw_lines(draw, lines, *, left: int, right: int, top: int, bottom: int,
+                line_color=None) -> None:
+    max_visible = max(0, int((bottom - top) // _LOG_LINE_H))
     if max_visible <= 0:
         return
-    default_color = color if color is not None else _TEXT
     font = fonts.mono(_LOG_FONT_SIZE)
 
-    left = _PANEL_TEXT_PAD
-    avail_px = int(panel_w) - left - _PAD
     char_w = _mono_char_width(font)
-    max_chars = max(1, int(avail_px / char_w)) if char_w > 0 else len(max(lines, key=len, default=""))
+    max_chars = max(1, int((right - left) / char_w)) if char_w > 0 else len(max(lines, key=len, default=""))
     indent_px = int(round(_MESSAGE_COLUMN * char_w))
 
     visible: deque[tuple[str, int, tuple]] = deque()
     for line in reversed(lines):
         line = str(line)
-        text_color = default_color if line_color is None else line_color(line)
+        text_color = _TEXT if line_color is None else line_color(line)
         for piece, indented in reversed(_layout_log_line(line, max_chars)):
-            x = left + (indent_px if indented else 0)
-            visible.appendleft((piece, x, text_color))
+            visible.appendleft((piece, left + (indent_px if indented else 0), text_color))
             if len(visible) >= max_visible:
                 break
         if len(visible) >= max_visible:
             break
 
     y = top
-
     for piece, x, text_color in visible:
         draw.text((x, y + _LOG_LINE_H / 2), piece, font=font, fill=text_color, anchor="lm")
         y += _LOG_LINE_H
@@ -265,31 +261,62 @@ def alert_line_color(line: str):
     return _TEXT
 
 
-def _draw_note(img, draw, text: str, x: Optional[int] = None) -> None:
-    x0 = _PAD if x is None else int(x)
+def _draw_note(draw, text: str, *, x: int, y: int, right: int) -> None:
     font = fonts.mono(_FONT_SIZE)
     char_w = _mono_char_width(font)
-    max_chars = max(1, int((img.width - _PAD - x0) / char_w)) if char_w > 0 else 60
-    y = _HEADER_H + _PAD + 6
+    max_chars = max(1, int((right - x) / char_w)) if char_w > 0 else 60
     for piece in _wrap_text(text, max_chars):
-        draw.text((x0, y), piece, font=font, fill=_MUTED)
+        draw.text((x, y), piece, font=font, fill=_MUTED)
         y += _LINE_H
 
 
 def text_panel(config, title: str, lines, height: int, *, engaged: bool,
-               line_color=None, width: Optional[int] = None) -> np.ndarray:
-    img, draw = _new_canvas(
-        config, title, height, title_x=_PANEL_TEXT_PAD, width=width,
-    )
-    if not engaged:
-        _draw_note(img, draw, _IDLE_NOTE, x=_PANEL_TEXT_PAD)
+               line_color=None, width: Optional[int] = None,
+               inset=(_PAD, 2, _PAD, 14)) -> np.ndarray:
+    w = int(width) if width else int(getattr(config, "panel_width", 940))
+    h = int(height)
+    img, draw = _new_canvas(w, h)
+    left, top, right, bottom = inset
+    x0, y0, x1, y1 = left, top, w - right, h - bottom
+    if x1 - x0 < 60 or y1 - y0 < _LOG_TEXT_TOP:
         return _finalize(img)
-    top = _HEADER_H + _PAD
+
+    _card_box(img, (x0, y0, x1, y1), fill=_LOG_FILL, edge=_LOG_EDGE)
+    draw = ImageDraw.Draw(img)
+    draw.text((x0 + 13, y0 + _LOG_TITLE_Y), title, font=fonts.sans_bold(_FONT_CARD_TITLE),
+              fill=_WHITE, anchor="lm")
+    draw.line((x0 + 10, y0 + _LOG_RULE_Y, x1 - 10, y0 + _LOG_RULE_Y), fill=_LOG_RULE, width=2)
+
+    if not engaged:
+        _draw_note(draw, _IDLE_NOTE, x=x0 + _LOG_TEXT_PAD, y=y0 + _LOG_TEXT_TOP + 6,
+                   right=x1 - _LOG_TEXT_PAD)
+        return _finalize(img)
     _draw_lines(
-        draw, lines, top=top, panel_h=img.height, panel_w=img.width,
-        line_color=line_color,
+        draw, lines, left=x0 + _LOG_TEXT_PAD, right=x1 - _LOG_TEXT_PAD,
+        top=y0 + _LOG_TEXT_TOP, bottom=y1 - 6, line_color=line_color,
     )
     return _finalize(img)
+
+
+def _x_height_middle(font) -> float:
+    _left, top, _right, bottom = font.getbbox("x", anchor="lm")
+    return (top + bottom) / 2
+
+
+def _draw_map_header(img, box, title: str, secondary: Optional[str]) -> None:
+    x0, y0, x1, y1 = box
+    _card_box(img, box)
+    draw = ImageDraw.Draw(img)
+    font = fonts.sans(_FONT_HEADER)
+    cy = (y0 + y1) / 2 - _x_height_middle(font)
+    x = x0 + _CARD_PAD_X
+    draw.text((x, cy), title, font=font, fill=_TITLE_ACCENT, anchor="lm")
+    if secondary:
+        x += draw.textlength(title, font=font) + 12
+        draw.text((x, cy), "|", font=font, fill=_HEADER_SEPARATOR, anchor="lm")
+        x += draw.textlength("|", font=font) + 12
+        secondary = _truncate_to_width(secondary, font, x1 - _CARD_PAD_X - x)
+        draw.text((x, cy), secondary, font=font, fill=_LABEL, anchor="lm")
 
 
 def _format_measure(value, decimals: int, unit: str) -> str:
@@ -300,102 +327,72 @@ def _format_measure(value, decimals: int, unit: str) -> str:
 
 
 def _axis_block_h() -> int:
-    return (
-        2 * _AXIS_PAD_Y + _AXIS_NAME_H
-        + _AXIS_NAME_GAP + 2 * _AXIS_LINE_H
-    )
+    return _AXIS_BLOCK_H
 
 
 def _tolerance_card_h() -> int:
-    return 2 * _CARD_PAD_Y + 3 * _axis_block_h()
+    return 3 * _axis_block_h()
 
 
-def _draw_float_box(img, draw, box) -> None:
-    x0, y0, x1, y1 = (int(v) for v in box)
-    mask = _shadow_mask(
-        (x1 - x0, y1 - y0), _FLOAT_RADIUS,
-        _SHADOW_BLUR, _SHADOW_OFFSET_Y, _SHADOW_ALPHA,
-    )
-    pad = _SHADOW_BLUR * 3
-    img.paste(
-        Image.new("RGB", mask.size, _SHADOW_COLOR),
-        (x0 - pad, y0 - pad), mask=mask,
-    )
-    draw.rounded_rectangle(
-        (x0, y0, x1, y1), radius=_FLOAT_RADIUS,
-        fill=_FLOAT_BG, outline=_FLOAT_BORDER, width=1,
-    )
-
-
-def _draw_pill(draw, x_right: int, y_center: int, ok, font) -> None:
+def _draw_pill(draw, x_right: int, y_top: int, ok, font) -> None:
     if ok is None:
-        text, fg, bg = TOLERANCE_PILL_UNKNOWN, _MUTED, None
-    elif ok:
-        text, fg, bg = TOLERANCE_PILL_OK, _POS, _PILL_OK_BG
+        draw.text((x_right, y_top + _PILL_H / 2), TOLERANCE_PILL_UNKNOWN,
+                  font=font, fill=_MUTED, anchor="rm")
+        return
+    if ok:
+        text, fg, bg, edge = TOLERANCE_PILL_OK, _PILL_OK_TEXT, _PILL_OK_BG, _PILL_OK_EDGE
     else:
-        text, fg, bg = TOLERANCE_PILL_BAD, _NEG, _PILL_BAD_BG
-    text_w = int(draw.textlength(text, font=font))
+        text, fg, bg, edge = TOLERANCE_PILL_BAD, _PILL_BAD_TEXT, _PILL_BAD_BG, _PILL_BAD_EDGE
+    text_w = draw.textlength(text, font=font)
     x0 = x_right - text_w - 2 * _PILL_PAD_X
-    if bg is not None:
-        draw.rounded_rectangle(
-            (x0, y_center - _PILL_H // 2, x_right, y_center + _PILL_H // 2),
-            radius=_PILL_H // 2, fill=bg,
-        )
-    draw.text((x0 + _PILL_PAD_X, y_center), text, font=font, fill=fg, anchor="lm")
-
-
-def _draw_kv_line(draw, x0: int, x1: int, y_center: int, label: str, value: str, color) -> None:
-    draw.text(
-        (x0, y_center), label,
-        font=fonts.mono(_FONT_KV_LABEL), fill=_MUTED, anchor="lm",
+    draw.rounded_rectangle(
+        (x0, y_top, x_right, y_top + _PILL_H), radius=_PILL_H // 2,
+        fill=bg, outline=edge, width=2,
     )
-    draw.text(
-        (x1, y_center), value,
-        font=fonts.mono(_FONT_KV_VALUE), fill=color, anchor="rm",
-    )
+    draw.text(((x0 + x_right) / 2, y_top + _PILL_H / 2), text, font=font, fill=fg, anchor="mm")
 
 
-def _draw_tolerance_card(img, draw, x0: int, y0: int, width: int, axes) -> None:
-    _draw_float_box(img, draw, (x0, y0, x0 + width, y0 + _tolerance_card_h()))
-    font_axis = fonts.mono(_FONT_MAP)
-    font_pill = fonts.mono(_FONT_PILL)
+def _draw_kv_line(draw, x0: int, x1: int, y_center: int, label: str, value: str) -> None:
+    font = fonts.sans(_FONT_KV)
+    draw.text((x0, y_center), label, font=font, fill=_LABEL, anchor="lm")
+    draw.text((x1, y_center), value, font=font, fill=_WHITE, anchor="rm")
+
+
+def _draw_tolerance_card(img, x0: int, y0: int, width: int, axes) -> None:
+    _card_box(img, (x0, y0, x0 + width, y0 + _tolerance_card_h()))
+    draw = ImageDraw.Draw(img)
+    font_axis = fonts.sans_bold(_FONT_AXIS)
+    font_pill = fonts.sans(_FONT_PILL)
     inner_x0 = x0 + _CARD_PAD_X
     inner_x1 = x0 + width - _CARD_PAD_X
 
-    y = y0 + _CARD_PAD_Y
     for index, (name, err, tol, ok, unit, decimals) in enumerate(axes):
+        top = y0 + index * _axis_block_h()
         if index:
-            draw.line([(inner_x0, y), (inner_x1, y)], fill=_FLOAT_DIVIDER, width=1)
-        name_y = y + _AXIS_PAD_Y
-        draw.text(
-            (inner_x0, name_y + _AXIS_NAME_H // 2), name,
-            font=font_axis, fill=_AXIS_NAME, anchor="lm",
-        )
-        _draw_pill(draw, inner_x1, name_y + _AXIS_NAME_H // 2, ok, font_pill)
-
-        line_y = name_y + _AXIS_NAME_H + _AXIS_NAME_GAP + _AXIS_LINE_H // 2
+            draw.line([(inner_x0, top), (inner_x1, top)], fill=_DIVIDER, width=1)
+        draw.text((inner_x0, top + _AXIS_NAME_Y), name, font=font_axis, fill=_WHITE, anchor="lm")
+        _draw_pill(draw, inner_x1, top + _PILL_TOP, ok, font_pill)
         _draw_kv_line(
-            draw, inner_x0, inner_x1, line_y,
+            draw, inner_x0, inner_x1, top + _AXIS_LINE_Y[0],
             TOLERANCE_ERROR_LABELS.get(name, TOLERANCE_ERROR_LABEL_DEFAULT),
-            _format_measure(err, decimals, unit), (255, 255, 255),
+            _format_measure(err, decimals, unit),
         )
         _draw_kv_line(
-            draw, inner_x0, inner_x1, line_y + _AXIS_LINE_H,
-            TOLERANCE_THRESHOLD_LABEL,
-            _format_measure(tol, decimals, unit), (141, 141, 141),
+            draw, inner_x0, inner_x1, top + _AXIS_LINE_Y[1],
+            TOLERANCE_THRESHOLD_LABEL, _format_measure(tol, decimals, unit),
         )
-        y += _axis_block_h()
 
 
-def _draw_timer_box(img, draw, x0: int, y0: int, width: int, mission_map) -> None:
-    _draw_float_box(img, draw, (x0, y0, x0 + width, y0 + _TIMER_H))
-    font = fonts.mono(_FONT_TIMER)
-    y_center = y0 + _TIMER_H // 2
+def _draw_timer_box(img, x0: int, y0: int, width: int, mission_map) -> None:
+    _card_box(img, (x0, y0, x0 + width, y0 + _TIMER_H))
+    draw = ImageDraw.Draw(img)
+    font = fonts.sans_bold(_FONT_CARD_TITLE)
+    y_center = y0 + _TIMER_H / 2
 
     badge = mission_map.badge() if mission_map is not None else None
     if badge is not None and badge.kind == "finished":
         draw.text(
-            (x0 + width // 2, y_center), MISSION_FINISHED_LABEL,
+            (x0 + width / 2, y_center), MISSION_FINISHED_LABEL,
             font=font, fill=_POS, anchor="mm",
         )
         return
@@ -406,12 +403,12 @@ def _draw_timer_box(img, draw, x0: int, y0: int, width: int, mission_map) -> Non
     value = "--" if remaining is None else f"{remaining:.1f} s"
     draw.text(
         (x0 + _CARD_PAD_X, y_center), SUPERVISION_LABEL,
-        font=font, fill=_AXIS_NAME, anchor="lm",
+        font=font, fill=_WHITE, anchor="lm",
     )
     draw.text(
         (x0 + width - _CARD_PAD_X, y_center), value,
         font=font, anchor="rm",
-        fill=(255, 255, 255) if remaining is not None else _MUTED,
+        fill=_WHITE if remaining is not None else _MUTED,
     )
 
 
@@ -420,111 +417,137 @@ def _map_legend_h() -> int:
     return 2 * _LEGEND_PAD_Y + _LEGEND_ROW_H * rows
 
 
+def _legend_font():
+    return fonts.sans(_LEGEND_FONT)
+
+
 def _legend_column_width(entries, font) -> int:
     text_w = max(font.getlength(name) for name, _kind, _fill, _border in entries)
     return int(text_w) + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP
 
 
-def _draw_legend_swatch(draw, cx: int, y: int, kind: str, fill, border) -> None:
-    half = _LEGEND_SWATCH // 2
+def _paint_legend_swatch(draw, cx: float, cy: float, k: int, kind: str, fill, border) -> None:
+    half = _LEGEND_SWATCH / 2 * k
     if kind == "dot":
-        draw.ellipse((cx - half, y - half, cx + half, y + half), fill=fill, outline=border)
+        draw.ellipse((cx - half, cy - half, cx + half, cy + half), fill=fill)
         return
-    if kind == "square":
-        draw.rectangle(
-            (cx - half, y - half, cx + half, y + half),
-            fill=fill, outline=border, width=2,
-        )
-        return
+    inset = 0 if kind == "square" else 2 * k
     draw.rectangle(
-        (cx - half - 3, y - half + 1, cx + half + 3, y + half - 1),
-        fill=fill, outline=border, width=2,
+        (cx - half, cy - half + inset, cx + half, cy + half - inset),
+        fill=fill, outline=border, width=2 * k,
     )
 
 
-def _draw_legend_column(draw, x0: int, y0: int, entries, font) -> None:
-    y = y0 + _LEGEND_ROW_H // 2
+def _draw_legend_column(img, x0: int, y0: int, entries, font) -> None:
+    draw = ImageDraw.Draw(img)
+    text_dy = _x_height_middle(font)
+    cx = x0 + _LEGEND_SWATCH / 2
+    reach = _LEGEND_SWATCH / 2 + 2
+    y = y0 + _LEGEND_ROW_H / 2
     for name, kind, fill, border in entries:
-        _draw_legend_swatch(draw, x0 + _LEGEND_SWATCH // 2, y, kind, fill, border)
+        paint_supersampled(
+            img, (cx - reach, y - reach, cx + reach, y + reach), (cx, y),
+            lambda d, ax, ay, k, kind=kind, fill=fill, border=border:
+                _paint_legend_swatch(d, ax, ay, k, kind, fill, border),
+        )
         draw.text(
-            (x0 + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP, y), name,
-            font=font, fill=(196, 198, 200), anchor="lm",
+            (x0 + _LEGEND_SWATCH + _LEGEND_SWATCH_GAP, y - text_dy), name,
+            font=font, fill=_LABEL, anchor="lm",
         )
         y += _LEGEND_ROW_H
 
 
-def _draw_map_legend(img, draw, x0: int, y0: int, width: int) -> None:
-    font = fonts.mono(_LEGEND_FONT)
-    _draw_float_box(img, draw, (x0, y0, x0 + width, y0 + _map_legend_h()))
+def _draw_map_legend(img, x0: int, y0: int, width: int) -> None:
+    font = _legend_font()
+    _card_box(img, (x0, y0, x0 + width, y0 + _map_legend_h()))
 
     left_x = x0 + _LEGEND_PAD_X
     right_x = left_x + _legend_column_width(LEGEND_WAYPOINTS, font) + _LEGEND_COL_GAP
     top = y0 + _LEGEND_PAD_Y
-    _draw_legend_column(draw, left_x, top, LEGEND_WAYPOINTS, font)
-    _draw_legend_column(draw, right_x, top, LEGEND_SCENE, font)
+    _draw_legend_column(img, left_x, top, LEGEND_WAYPOINTS, font)
+    _draw_legend_column(img, right_x, top, LEGEND_SCENE, font)
 
 
-def _disclaimer_h(width: int) -> int:
-    font = fonts.mono(_DISCLAIMER_FONT)
-    char_w = _mono_char_width(font)
-    avail = width - 2 * _PANEL_TEXT_PAD
-    max_chars = max(1, int(avail / char_w)) if char_w > 0 else len(MAP_DISCLAIMER)
-    return _DISCLAIMER_LINE_H * len(_wrap_text(MAP_DISCLAIMER, max_chars)) + _PAD
+def _disclaimer_lines(width: int) -> list[str]:
+    font = fonts.sans(_DISCLAIMER_FONT)
+    return _wrap_px(MAP_DISCLAIMER, font, width - _MAP_LEFT - _RAIL_RIGHT)
 
 
-def _draw_disclaimer(img, draw) -> None:
-    font = fonts.mono(_DISCLAIMER_FONT)
-    char_w = _mono_char_width(font)
-    avail = img.width - 2 * _PANEL_TEXT_PAD
-    max_chars = max(1, int(avail / char_w)) if char_w > 0 else len(MAP_DISCLAIMER)
-    lines = _wrap_text(MAP_DISCLAIMER, max_chars)
-    y = img.height - _PAD - _DISCLAIMER_LINE_H * len(lines)
-    for piece in lines:
+def _disclaimer_block_h(width: int) -> int:
+    return _DISCLAIMER_GAP + _DISCLAIMER_LINE_H * len(_disclaimer_lines(width)) + _PAD
+
+
+def _draw_disclaimer(draw, width: int, y: int) -> None:
+    font = fonts.sans(_DISCLAIMER_FONT)
+    for piece in _disclaimer_lines(width):
         draw.text(
-            (_PANEL_TEXT_PAD, y + _DISCLAIMER_LINE_H / 2), piece,
-            font=font, fill=_MUTED, anchor="lm",
+            (_MAP_LEFT, y + _DISCLAIMER_LINE_H / 2), piece,
+            font=font, fill=_LABEL, anchor="lm",
         )
         y += _DISCLAIMER_LINE_H
+
+
+def _rail_h() -> int:
+    return _TIMER_H + _RAIL_GAP + _tolerance_card_h() + _RAIL_GAP + _map_legend_h()
+
+
+def _content_top() -> int:
+    return _HEADER_TOP + _HEADER_H + _RAIL_GAP
+
+
+def map_panel_height(config) -> int:
+    width = int(getattr(config, "panel_width", 940))
+    return _content_top() + _rail_h() + _disclaimer_block_h(width)
+
+
+def _map_layout(config, height: int) -> dict:
+    width = int(getattr(config, "panel_width", 940))
+    rail_w = max(80, int(getattr(config, "map_info_col_width", 440)))
+    rail_x0 = width - _RAIL_RIGHT - rail_w
+    top = _content_top()
+    map_w = max(60, rail_x0 - _RAIL_MAP_GAP - _MAP_LEFT)
+    map_h = max(60, min(_rail_h(), int(height) - top - _disclaimer_block_h(width)))
+    return {
+        "header": (_MAP_LEFT, _HEADER_TOP, width - _RAIL_RIGHT, _HEADER_TOP + _HEADER_H),
+        "map": (_MAP_LEFT, top, _MAP_LEFT + map_w, top + map_h),
+        "rail": (rail_x0, top, rail_x0 + rail_w, top + _rail_h()),
+        "disclaimer_y": top + map_h + _DISCLAIMER_GAP,
+    }
 
 
 def map_panel(config, height: int, *, mission_map, scenario_name: Optional[str],
               drone_xy, drone_heading_deg: float, drone_pose_fresh: bool,
               axes) -> np.ndarray:
-    img, draw = _new_canvas(
-        config, getattr(config, "map_title", "Mappa missione"), height,
-        secondary=scenario_name, title_x=_PANEL_TEXT_PAD,
+    width = int(getattr(config, "panel_width", 940))
+    height = int(height)
+    img, _draw = _new_canvas(width, height)
+    layout = _map_layout(config, height)
+    _draw_map_header(
+        img, layout["header"], getattr(config, "map_title", "Mappa missione"), scenario_name,
     )
 
     if mission_map is None:
-        _draw_note(img, draw, _NO_MISSION_NOTE, x=_PANEL_TEXT_PAD)
+        _draw_note(ImageDraw.Draw(img), _NO_MISSION_NOTE, x=_MAP_LEFT,
+                   y=_content_top() + 6, right=width - _RAIL_RIGHT)
         return _finalize(img)
 
-    pad = _MAP_PAD
-    top = _HEADER_H + pad
-    map_w = max(60, img.width - 2 * pad)
-    map_h = max(60, img.height - top - pad - _disclaimer_h(img.width))
-    rail_w = max(80, int(getattr(config, "map_info_col_width", 252)))
-    reserved_right = rail_w + 2 * _FLOAT_INSET
-
+    map_x0, map_y0, map_x1, map_y1 = layout["map"]
     map_img = draw_mission_map(
-        mission_map, map_w, map_h,
+        mission_map, map_x1 - map_x0, map_y1 - map_y0 - 1,
         drone_xy=drone_xy,
         drone_heading_deg=drone_heading_deg,
         drone_pose_fresh=drone_pose_fresh,
-        reserved_right_px=reserved_right,
     )
-    img.paste(map_img, (pad, top))
+    img.paste(map_img, (map_x0, map_y0 + 1))
+    ImageDraw.Draw(img).rectangle((map_x0 - 1, map_y0, map_x1, map_y1), outline=_MAP_BORDER)
 
-    rail_x0 = img.width - pad - _FLOAT_INSET - rail_w
-    rail_h = (
-        _TIMER_H + _RAIL_GAP + _tolerance_card_h() + _RAIL_GAP + _map_legend_h()
-    )
-    y = top + max(0, (map_h - rail_h) // 2)
-    _draw_timer_box(img, draw, rail_x0, y, rail_w, mission_map)
+    rail_x0, y, rail_x1, _rail_bottom = layout["rail"]
+    rail_w = rail_x1 - rail_x0
+    _draw_timer_box(img, rail_x0, y, rail_w, mission_map)
     y += _TIMER_H + _RAIL_GAP
-    _draw_tolerance_card(img, draw, rail_x0, y, rail_w, axes)
+    _draw_tolerance_card(img, rail_x0, y, rail_w, axes)
     y += _tolerance_card_h() + _RAIL_GAP
-    _draw_map_legend(img, draw, rail_x0, y, rail_w)
+    _draw_map_legend(img, rail_x0, y, rail_w)
 
-    _draw_disclaimer(img, draw)
+    _draw_disclaimer(ImageDraw.Draw(img), width, layout["disclaimer_y"])
     return _finalize(img)

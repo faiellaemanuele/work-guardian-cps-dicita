@@ -5,6 +5,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+import numpy as np
+from PIL import Image
+
 from drone.config import APP_CONFIG
 from drone.ui import fonts
 from drone.ui.video import panels
@@ -80,7 +83,7 @@ def test_truncate_to_width_adds_ellipsis_and_fits():
 
 
 def test_the_legend_fits_the_information_column():
-    font = fonts.mono(panels._LEGEND_FONT)
+    font = panels._legend_font()
     larghezza = (
         2 * panels._LEGEND_PAD_X + panels._LEGEND_COL_GAP
         + panels._legend_column_width(LEGEND_WAYPOINTS, font)
@@ -89,18 +92,42 @@ def test_the_legend_fits_the_information_column():
     assert larghezza <= APP_CONFIG.dashboard.map_info_col_width
 
 
-def test_the_information_column_fits_the_map_panel():
+def test_the_map_starts_with_the_timer_and_ends_with_the_legend():
     config = APP_CONFIG.dashboard
-    altezza_pannello = config.video_size[1] - config.gap_px - config.log_row_height
-    altezza_mappa = (
-        altezza_pannello - panels._HEADER_H - 2 * panels._MAP_PAD
-        - panels._disclaimer_h(config.panel_width)
-    )
-    altezza_colonna = (
-        panels._TIMER_H + panels._RAIL_GAP + panels._tolerance_card_h()
-        + panels._RAIL_GAP + panels._map_legend_h()
-    )
-    assert altezza_colonna <= altezza_mappa
+    layout = panels._map_layout(config, panels.map_panel_height(config))
+    _x0, mappa_sopra, _x1, mappa_sotto = layout["map"]
+    _rx0, colonna_sopra, _rx1, colonna_sotto = layout["rail"]
+    assert mappa_sopra == colonna_sopra
+    assert mappa_sotto == colonna_sotto
+    assert colonna_sopra - layout["header"][3] == panels._RAIL_GAP
+
+
+def test_the_disclaimer_stays_inside_the_map_panel():
+    config = APP_CONFIG.dashboard
+    altezza = panels.map_panel_height(config)
+    layout = panels._map_layout(config, altezza)
+    righe = len(panels._disclaimer_lines(config.panel_width))
+    assert layout["disclaimer_y"] + righe * panels._DISCLAIMER_LINE_H <= altezza
+
+
+def test_the_disclaimer_names_meters_and_degrees():
+    assert "metri o gradi" in panels.MAP_DISCLAIMER
+    assert "m/°" not in panels.MAP_DISCLAIMER
+
+
+def test_the_legend_labels_are_centered_on_their_symbols():
+    img = Image.new("RGB", (300, 60), (0, 0, 0))
+    bianco = (255, 255, 255)
+    panels._draw_legend_column(img, 0, 0, [("xxxx", "square", bianco, bianco)], panels._legend_font())
+    arr = np.asarray(img)
+
+    def centro(colonne):
+        righe = np.where(arr[:, colonne].any(axis=2).any(axis=1))[0]
+        return (int(righe.min()) + int(righe.max())) / 2
+
+    simbolo = centro(slice(0, panels._LEGEND_SWATCH + 1))
+    testo = centro(slice(panels._LEGEND_SWATCH + panels._LEGEND_SWATCH_GAP, 300))
+    assert abs(simbolo - testo) <= 1, f"simbolo a y={simbolo}, scritta a y={testo}"
 
 
 def _run_all() -> int:

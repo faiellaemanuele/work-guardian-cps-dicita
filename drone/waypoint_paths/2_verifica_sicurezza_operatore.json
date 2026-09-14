@@ -1,6 +1,6 @@
 {
   "name": "Verifica della sicurezza dell'operatore",
-  "description": "Il drone vola in autonomia lungo il perimetro, con soste di supervisione, per controllare di ogni persona le protezioni individuali — elmetto, occhiali, gilet e scarpe antinfortunistiche —, le cadute e il superamento delle aree interdette, e al termine atterra alla home.",
+  "description": "Il drone segue il perimetro in autonomia. Durante le soste verifica casco, occhiali, gilet e scarpe antinfortunistiche. Rileva cadute e accessi alle aree interdette. Al termine rientra e atterra alla base.",
   "waypoints": [
     {"x": 0,     "y": 2.10,  "z": 2.10, "yaw_deg": 90},
     {"x": 0.6,   "y": 1.5,   "z": 2.10, "yaw_deg": 70}, 

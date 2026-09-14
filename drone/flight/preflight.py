@@ -35,10 +35,10 @@ from drone.hardware.tello_controller import RealTelloController
 from drone.perception.pose_estimator import CameraPoseEstimator
 from drone.ui.video.dashboard import Dashboard
 from drone.ui.console import (
-    SEP_THIN,
     print_event,
-    log_console_block,
     log_phase,
+    log_ready_banner,
+    log_title,
     print_step,
     set_alert_sink,
 )
@@ -533,18 +533,19 @@ def _announce_ready(dashboard) -> None:
     dashboard.clear_terminal()
     dashboard.clear_alerts()
 
-    ready_banner = (
-        f"\n{SEP_THIN}\n"
-        "Tutto pronto. Il drone è a terra e risponde al controller: "
-        "puoi decollare quando vuoi.\n"
-        f"{format_joystick_help()}\n"
-        "\nDa qui in avanti il volo si segue nella finestra del drone.\n"
-        "Su questa console restano soltanto gli errori, se ce ne saranno."
+    log_ready_banner(
+        "Tutto pronto",
+        "Il drone è a terra e risponde al controller: puoi decollare quando vuoi.",
+        format_joystick_help(),
+        (
+            "Da qui in avanti il volo si segue nella finestra del drone.",
+            "Su questa console restano soltanto gli errori, se ce ne saranno.",
+        ),
     )
-    log_console_block(ready_banner)
 
 
 def run_startup(subsystems: Subsystems, original_stdout) -> bool:
+    log_title(APP_CONFIG.project_title)
     _start_dashboard(subsystems, original_stdout)
 
     screen = _phase_manual_control(subsystems)
