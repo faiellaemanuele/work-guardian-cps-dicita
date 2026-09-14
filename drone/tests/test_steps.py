@@ -76,9 +76,15 @@ class _VisionLoop:
         self._modelli = set(modelli)
         self.verdetto = None
         self.overlay = None
+        self.allarmi_inviati: list[dict] = []
 
     def get_latest_pose_estimate(self):
         return "posa"
+
+    def publish_alarm(self, *, kind, message, level="warning"):
+        self._registro.passi.append("allarme_sul_canale")
+        self.allarmi_inviati.append({"kind": kind, "message": message, "level": level})
+        return True
 
     def update_autopilot_overlay(self, command):
         self._registro.passi.append("overlay")
@@ -541,6 +547,65 @@ def test_senza_monitor_dpi_non_succede_niente():
     _esegui_sorveglianza(banco, None, dpi=True)
 
     assert banco.registro.passi == []
+
+
+def test_il_superamento_di_area_interdetta_arriva_all_orologio():
+    banco = _Banco(None, ultimo_comando={"supervision_stop_active": True})
+    monitor = _Monitor(
+        banco.registro,
+        [{"type": "restricted_area", "message": "Una persona in un'area vietata"}],
+    )
+
+    _esegui_sorveglianza(banco, monitor)
+
+    assert banco.vision_loop.allarmi_inviati == [
+        {
+            "kind": "restricted_area",
+            "message": "Una persona in un'area vietata",
+            "level": "critical",
+        }
+    ]
+
+
+def test_i_dpi_mancanti_arrivano_all_orologio_come_avviso():
+    banco = _Banco(None, ultimo_comando={"supervision_stop_active": True})
+    monitor = _Monitor(
+        banco.registro, [{"type": "dpi_missing", "message": "Manca l'elmetto"}]
+    )
+
+    _esegui_sorveglianza(banco, monitor, dpi=True)
+
+    assert banco.vision_loop.allarmi_inviati[0]["kind"] == "dpi_missing"
+    assert banco.vision_loop.allarmi_inviati[0]["level"] == "warning"
+
+
+def test_la_caduta_arriva_all_orologio_come_critica():
+    banco = _Banco(None, ultimo_comando={"supervision_stop_active": True})
+    monitor = _Monitor(
+        banco.registro, [{"type": "fall", "message": "Rilevata la caduta di una persona"}]
+    )
+
+    _esegui_sorveglianza(banco, monitor)
+
+    assert banco.vision_loop.allarmi_inviati[0]["level"] == "critical"
+
+
+def test_l_allarme_resta_nel_log_anche_se_il_canale_e_muto():
+    banco = _Banco(None, ultimo_comando={"supervision_stop_active": True})
+
+    def _canale_rotto(**_kwargs):
+        raise RuntimeError("broker sparito")
+
+    banco.vision_loop.publish_alarm = _canale_rotto
+    monitor = _Monitor(
+        banco.registro, [{"type": "fall", "message": "Rilevata la caduta di una persona"}]
+    )
+
+    _esegui_sorveglianza(banco, monitor)
+
+    assert banco.registro.eventi == [
+        ("Rilevata la caduta di una persona", "AVVISO", "alert")
+    ]
 
 
 def _run_all() -> int:

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import pygame
 from PIL import Image, ImageDraw, ImageFilter
 
+from drone.config import APP_CONFIG
+from drone.hardware.joystick import read_setup_action
 from drone.ui import fonts
 from drone.ui.setup.effects import (
     bg_gradient,
@@ -21,8 +25,31 @@ from drone.ui.setup.effects import (
 _SUPERSAMPLE = 2
 
 
+_REFERENCE_WIDTH = 1920
+_REFERENCE_HEIGHT = 1080
+
+_LAYOUT_SCALE = 1.0
+
+
 def _scale(value: float) -> int:
+    return int(round(value * _SUPERSAMPLE * _LAYOUT_SCALE))
+
+
+def _px(value: float) -> int:
     return int(round(value * _SUPERSAMPLE))
+
+
+def _base_layout_scale(width: int, height: int) -> float:
+    return min(
+        1.25,
+        max(0.55, min(width / _REFERENCE_WIDTH, height / _REFERENCE_HEIGHT)),
+    )
+
+
+def _apply_layout_scale(width: int, height: int) -> float:
+    global _LAYOUT_SCALE
+    _LAYOUT_SCALE = _base_layout_scale(width, height)
+    return _LAYOUT_SCALE
 
 
 _HEADER_BAND_H = 150
@@ -34,15 +61,16 @@ _ALERT_ZONE_H = 100
 def _compute_tile_rects(n, width, height, *, cols, tile_h, gap=20):
     rows = (n + cols - 1) // cols
     margin_x = max(40, int(width * 0.06))
-    header_h = _HEADER_BAND_H
-    footer_h = _FOOTER_BAND_H
+    header_h = int(_HEADER_BAND_H * _LAYOUT_SCALE)
+    footer_h = int(_FOOTER_BAND_H * _LAYOUT_SCALE)
     avail_h = height - header_h - footer_h
 
     grid_h = rows * tile_h + gap * (rows - 1)
     if grid_h > avail_h:
         tile_h = max(72, int((avail_h - gap * (rows - 1)) / rows))
         grid_h = rows * tile_h + gap * (rows - 1)
-    reserve = _ALERT_ZONE_H if (avail_h - grid_h) >= _ALERT_ZONE_H else 0
+    alert_zone = int(_ALERT_ZONE_H * _LAYOUT_SCALE)
+    reserve = alert_zone if (avail_h - grid_h) >= alert_zone else 0
     top = header_h + max(0, (avail_h - reserve - grid_h) // 2)
 
     grid_w = width - 2 * margin_x
@@ -56,38 +84,68 @@ def _compute_tile_rects(n, width, height, *, cols, tile_h, gap=20):
     return rects
 
 
-def _draw_keyboard_hints(draw, key_groups, *, f_kbd, f_hint, cancel_rect, margin_x):
+def footer_rects(width: int, height: int):
+    k = _base_layout_scale(width, height)
+    larghezza = int(round(250 * k))
+    altezza = int(round(54 * k))
+    margine = int(round(32 * k))
+    stacco = int(round(20 * k))
+    y = height - altezza - int(round(28 * k))
+    confirm_rect = pygame.Rect(width - margine - larghezza, y, larghezza, altezza)
+    cancel_rect = pygame.Rect(confirm_rect.x - stacco - larghezza, y, larghezza, altezza)
+    back_rect = pygame.Rect(cancel_rect.x - stacco - larghezza, y, larghezza, altezza)
+    return confirm_rect, cancel_rect, back_rect
+
+
+def _draw_dpad_glyph(draw, cx, cy, r):
     S = _scale
-    asc_k, desc_k = f_kbd.getmetrics()
-    kbd_h = asc_k + desc_k + S(7) * 2
-    btn_cy = S(cancel_rect.y + cancel_rect.height / 2)
-    ky = btn_cy - kbd_h // 2
-    kx = S(margin_x)
-
-    def kbd(label, x):
-        w_ = max(int(f_kbd.getlength(label)) + S(9) * 2, kbd_h)
-        draw.rounded_rectangle(
-            [x, ky, x + w_, ky + kbd_h], radius=S(7),
-            fill=(40, 45, 57), outline=(72, 79, 96), width=S(1),
+    draw.rounded_rectangle(
+        (cx - r, cy - r, cx + r, cy + r), radius=S(6),
+        fill=(40, 45, 57), outline=(72, 79, 96), width=S(1),
+    )
+    a = r * 0.55
+    punta = (206, 212, 224)
+    draw.line((cx, cy - a, cx, cy + a), fill=punta, width=S(2))
+    for sy in (-1, 1):
+        draw.polygon(
+            [
+                (cx, cy + sy * a),
+                (cx - S(5), cy + sy * (a - S(6))),
+                (cx + S(5), cy + sy * (a - S(6))),
+            ],
+            fill=punta,
         )
-        draw.line(
-            [(x + S(4), ky + kbd_h - S(2)), (x + w_ - S(4), ky + kbd_h - S(2))],
-            fill=(72, 79, 96), width=S(2),
-        )
-        draw.text((x + w_ // 2, btn_cy), label, font=f_kbd, fill=(231, 234, 241), anchor="mm")
-        return w_
 
-    for gi, (keys, label) in enumerate(key_groups):
+
+def _draw_cross_glyph(draw, cx, cy, r):
+    S = _scale
+    draw.ellipse(
+        (cx - r, cy - r, cx + r, cy + r),
+        fill=(40, 45, 57), outline=(72, 79, 96), width=S(1),
+    )
+    k = r * 0.44
+    draw.line((cx - k, cy - k, cx + k, cy + k), fill=(124, 178, 232), width=S(3))
+    draw.line((cx - k, cy + k, cx + k, cy - k), fill=(124, 178, 232), width=S(3))
+
+
+def _draw_joystick_hints(draw, hint_groups, *, f_hint, cancel_rect, margin_x):
+    S = _scale
+    btn_cy = _px(cancel_rect.y + cancel_rect.height / 2)
+    x = _px(margin_x)
+    r = S(17)
+
+    for gi, (kind, label) in enumerate(hint_groups):
         if gi > 0:
-            kx += S(14)
-            draw.text((kx, btn_cy), "·", font=f_hint, fill=(80, 86, 100), anchor="lm")
-            kx += S(18)
-        for key in keys:
-            kx += kbd(key, kx) + S(7)
-        if label:
-            kx += S(6)
-            draw.text((kx, btn_cy), label, font=f_hint, fill=(178, 184, 198), anchor="lm")
-            kx += int(f_hint.getlength(label))
+            x += S(16)
+            draw.text((x, btn_cy), "·", font=f_hint, fill=(80, 86, 100), anchor="lm")
+            x += S(20)
+        if kind == "cross":
+            _draw_cross_glyph(draw, x + r, btn_cy, r)
+        else:
+            _draw_dpad_glyph(draw, x + r, btn_cy, r)
+        x += 2 * r + S(10)
+        draw.text((x, btn_cy), label, font=f_hint, fill=(178, 184, 198), anchor="lm")
+        x += int(f_hint.getlength(label))
 
 
 _ALERT_DOT = {"info": (96, 124, 172), "warn": (212, 156, 66)}
@@ -97,7 +155,7 @@ def _draw_alert(draw, W, height, grid_bottom, kind, text, font):
     SS = _SUPERSAMPLE
     S = _scale
     cx = W // 2
-    cy = (grid_bottom * SS + S(height - 108)) // 2
+    cy = (grid_bottom * SS + _px(height - 108)) // 2
     h = S(48)
     padx = S(24)
     dot_d = S(16)
@@ -129,22 +187,23 @@ def _draw_screen_backdrop(img, W, H, rects, focus, colors, enabled):
 
     if 0 <= focus < len(rects):
         r = rects[focus]
-        color = colors[focus]
+        c = colors[focus]
         glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        gdraw = ImageDraw.Draw(glow)
-        gdraw.rounded_rectangle(
+        ImageDraw.Draw(glow).rounded_rectangle(
             [r.x * SS - S(4), r.y * SS - S(4), r.right * SS + S(4), r.bottom * SS + S(4)],
-            radius=S(18), fill=(*color, 150 if enabled[focus] else 70),
+            radius=S(18), fill=(c[0], c[1], c[2], 150 if enabled[focus] else 70),
         )
         img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(S(16))))
 
 
 def _draw_screen_heading(img, draw, W, title, subtitle, f_title, f_sub):
     S = _scale
-    title_img = gradient_text(title, f_title, (255, 255, 255), (174, 191, 224))
-    img.alpha_composite(title_img, ((W - title_img.width) // 2, S(52) - title_img.height // 2))
-    draw.text((W // 2, S(102)), subtitle, font=f_sub,
-              fill=(176, 182, 194), anchor="mm")
+    gt = gradient_text(title, f_title, (255, 255, 255), (174, 191, 224))
+    img.alpha_composite(gt, (W // 2 - gt.width // 2, S(52) - gt.height // 2))
+    draw.text(
+        (W // 2, S(102)), subtitle,
+        font=f_sub, fill=(176, 182, 194), anchor="mm",
+    )
 
 
 def _draw_tile_frame(img, draw, r, color, on, is_focus):
@@ -153,14 +212,16 @@ def _draw_tile_frame(img, draw, r, color, on, is_focus):
     x0, y0, x1, y1 = r.x * SS, r.y * SS, r.right * SS, r.bottom * SS
 
     if on:
-        c0, c1, c2 = color
-        bg = (min(40, 23 + c0 // 12), min(44, 26 + c1 // 12), min(52, 34 + c2 // 12), 255)
+        bg = (min(40, 23 + color[0] // 12), min(44, 26 + color[1] // 12),
+              min(52, 34 + color[2] // 12), 255)
     else:
         bg = (23, 26, 34, 255)
     draw.rounded_rectangle([x0, y0, x1, y1], radius=S(14), fill=bg)
     if on:
-        img.alpha_composite(corner_glow(x1 - x0, y1 - y0, color, S(14)), (x0, y0))
-    border_col = color if on or is_focus else (40, 44, 54)
+        img.alpha_composite(
+            corner_glow(r.width * SS, r.height * SS, color, S(14)), (x0, y0)
+        )
+    border_col = color if (on or is_focus) else (40, 44, 54)
     draw.rounded_rectangle(
         [x0, y0, x1, y1], radius=S(14), outline=border_col,
         width=S(2) if (on or is_focus) else S(1),
@@ -186,26 +247,25 @@ def _draw_tile_badge(draw, number, bx0, by0, bcy, bsz, color, f_badge):
 
 def _draw_tile_toggle(draw, x1, bcy, pad, on, color):
     S = _scale
-    sw_w, sw_h = S(60), S(34)
-    sx1 = x1 - pad
-    sx0 = sx1 - sw_w
-    sy0, sy1 = bcy - sw_h // 2, bcy + sw_h // 2
+    tw, th = S(60), S(34)
+    tgx1 = x1 - pad
+    tgx0 = tgx1 - tw
+    tgy0 = bcy - th // 2
     draw.rounded_rectangle(
-        [sx0, sy0, sx1, sy1], radius=sw_h // 2,
+        [tgx0, tgy0, tgx1, tgy0 + th], radius=th // 2,
         fill=color if on else (52, 57, 68),
     )
-    knob_r = S(13)
-    knob_cx = sx1 - sw_h // 2 if on else sx0 + sw_h // 2
-    draw.ellipse(
-        [knob_cx - knob_r, bcy - knob_r, knob_cx + knob_r, bcy + knob_r],
-        fill=(255, 255, 255) if on else (150, 155, 165),
-    )
+    knob_r = th // 2 - S(3)
+    knob_cx = tgx1 - knob_r - S(3) if on else tgx0 + knob_r + S(3)
+    knob_col = (255, 255, 255) if on else (150, 155, 165)
+    draw.ellipse([knob_cx - knob_r, bcy - knob_r, knob_cx + knob_r, bcy + knob_r], fill=knob_col)
 
 
 _WAYPOINT_COLS = 1
 
 
-def _waypoint_tile_height(descriptions, width) -> int:
+def _waypoint_tile_height(descriptions, width, height=_REFERENCE_HEIGHT) -> int:
+    _apply_layout_scale(width, height)
     S = _scale
     SS = _SUPERSAMPLE
     margin_x = max(40, int(width * 0.06))
@@ -236,8 +296,14 @@ _WAYPOINT_PALETTE = (
 
 
 WAYPOINT_TITLE = "Scelta dello scenario"
-WAYPOINT_SUBTITLE = "Il percorso che esegue il drone e i modelli di detection attivi quando si passa in volo automatico"
+WAYPOINT_SUBTITLE = "Il percorso che esegue il drone, i controlli delle soste di supervisione e i modelli di detection che si caricano"
 WAYPOINT_MODELS_LABEL = "MODELLI"
+
+GO_BACK = object()
+
+
+def _button_label(testo: str, etichetta: str) -> str:
+    return f"{testo} ({etichetta})"
 
 
 def _draw_tile_models(draw, x, y, models, color, on):
@@ -264,8 +330,9 @@ def _draw_tile_models(draw, x, y, models, color, on):
 
 
 def _render_waypoint_screen(width, height, names, descriptions, colors, enabled,
-                            focus, focused, rects, confirm_rect, cancel_rect,
-                            cancel_hover, confirm_hover, models):
+                            focus, focused, rects, confirm_rect, cancel_rect, back_rect,
+                            cancel_hover, confirm_hover, back_hover, models):
+    _apply_layout_scale(width, height)
     SS = _SUPERSAMPLE
     W, H = width * SS, height * SS
     margin_x = max(40, int(width * 0.06))
@@ -277,7 +344,6 @@ def _render_waypoint_screen(width, height, names, descriptions, colors, enabled,
     f_name   = fonts.sans_bold(S(34))
     f_desc   = fonts.sans(S(24))
     f_badge  = fonts.sans_bold(S(30))
-    f_kbd    = fonts.sans_bold(S(20))
     f_hint   = fonts.sans(S(20))
     f_btn    = fonts.sans_bold(S(23))
     f_msg    = fonts.sans_bold(S(28))
@@ -314,13 +380,14 @@ def _render_waypoint_screen(width, height, names, descriptions, colors, enabled,
         asc_d, desc_d = f_desc.getmetrics()
         desc_lh = asc_d + desc_d
 
+        tile_models = models[i]
+        chip_h = S(34) if tile_models else 0
+
         pad_v = S(16)
-        avail_desc_h = (y1 - y0) - 2 * pad_v - name_lh - S(6)
+        avail_desc_h = (y1 - y0) - 2 * pad_v - name_lh - S(6) - chip_h
         max_desc_lines = max(1, int(avail_desc_h // desc_lh))
         desc_lines = wrap_text(descriptions[i], f_desc, text_max_w, max_desc_lines)
 
-        tile_models = models[i]
-        chip_h = S(34) if tile_models else 0
         gap_nd = S(6) if desc_lines else 0
         total_h = name_lh + gap_nd + len(desc_lines) * desc_lh + chip_h
         ty = bcy - total_h // 2
@@ -343,38 +410,42 @@ def _render_waypoint_screen(width, height, names, descriptions, colors, enabled,
         _draw_alert(draw, W, height, max(r.bottom for r in rects), "info",
                     "La finestra non è attiva, clicca per usarla", f_msg)
 
+    linea = _px(back_rect.y - 14)
     draw.line(
-        [(S(margin_x), S(height - 108)), (W - S(margin_x), S(height - 108))],
+        [(_px(margin_x), linea), (W - _px(margin_x), linea)],
         fill=(32, 35, 43), width=S(1),
     )
 
-    key_groups = [
-        (["↑", "↓", "←", "→"], "naviga"),
-        (["Spazio"], "seleziona"),
+    hint_groups = [
+        ("dpad", "naviga"),
+        ("cross", "seleziona"),
     ]
-    _draw_keyboard_hints(
-        draw, key_groups,
-        f_kbd=f_kbd, f_hint=f_hint, cancel_rect=cancel_rect, margin_x=margin_x,
+    _draw_joystick_hints(
+        draw, hint_groups, f_hint=f_hint, cancel_rect=cancel_rect, margin_x=margin_x,
     )
 
+    mapping = APP_CONFIG.joystick
+    for rect, testo, etichetta, hover in (
+        (back_rect, "Indietro", mapping.label_setup_back, back_hover),
+        (cancel_rect, "Annulla", mapping.label_setup_cancel, cancel_hover),
+    ):
+        draw.rounded_rectangle(
+            [rect.x * SS, rect.y * SS, rect.right * SS, rect.bottom * SS], radius=S(9),
+            fill=(30, 34, 42) if hover else (22, 25, 32), outline=(70, 76, 90), width=S(1),
+        )
+        draw.text(
+            ((rect.x + rect.width / 2) * SS, (rect.y + rect.height / 2) * SS),
+            _button_label(testo, etichetta), font=f_btn, fill=(205, 209, 218), anchor="mm",
+        )
+
+    qb = confirm_rect
     draw.rounded_rectangle(
-        [S(cancel_rect.x), S(cancel_rect.y), S(cancel_rect.right), S(cancel_rect.bottom)],
-        radius=S(10),
-        fill=(30, 34, 42) if cancel_hover else (22, 25, 32),
-        outline=(70, 76, 90), width=S(1),
-    )
-    draw.text(
-        (S(cancel_rect.centerx), S(cancel_rect.centery)), "Annulla (Esc)",
-        font=f_btn, fill=(205, 209, 218), anchor="mm",
-    )
-    draw.rounded_rectangle(
-        [S(confirm_rect.x), S(confirm_rect.y), S(confirm_rect.right), S(confirm_rect.bottom)],
-        radius=S(10),
+        [qb.x * SS, qb.y * SS, qb.right * SS, qb.bottom * SS], radius=S(9),
         fill=(80, 210, 130) if confirm_hover else (61, 200, 132),
-        outline=(61, 200, 132), width=S(1),
     )
     draw.text(
-        (S(confirm_rect.centerx), S(confirm_rect.centery)), "Conferma (Invio)",
+        ((qb.x + qb.width / 2) * SS, (qb.y + qb.height / 2) * SS),
+        _button_label("Conferma", mapping.label_setup_confirm),
         font=f_btn, fill=(8, 19, 12), anchor="mm",
     )
 
@@ -388,7 +459,6 @@ def select_waypoint_path_interactive(screen, paths, models=()):
     descriptions = [getattr(p, "description", "") or "" for p in paths]
     models = [list(models[i]) if i < len(models) else [] for i in range(n)]
     colors = [_WAYPOINT_PALETTE[i % len(_WAYPOINT_PALETTE)] for i in range(n)]
-    number_keys = [getattr(pygame, f"K_{i + 1}") for i in range(min(9, n))]
 
     selected = 0
     focus = 0
@@ -407,13 +477,12 @@ def select_waypoint_path_interactive(screen, paths, models=()):
     while True:
         width, height = screen.get_size()
         focused = pygame.key.get_focused()
-        tile_h = _waypoint_tile_height(descriptions, width)
+        tile_h = _waypoint_tile_height(descriptions, width, height)
         rects = _compute_tile_rects(
             n, width, height, cols=_WAYPOINT_COLS, tile_h=tile_h, gap=18,
         )
 
-        confirm_rect = pygame.Rect(width - 282, height - 82, 250, 54)
-        cancel_rect = pygame.Rect(width - 552, height - 82, 250, 54)
+        confirm_rect, cancel_rect, back_rect = footer_rects(width, height)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -421,28 +490,20 @@ def select_waypoint_path_interactive(screen, paths, models=()):
             if event.type == pygame.VIDEORESIZE:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
                 continue
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    return None
-                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                    return paths[selected]
-                if event.key == pygame.K_SPACE:
-                    selected = focus
-                    continue
-                cols = _WAYPOINT_COLS
-                if event.key == pygame.K_LEFT:
-                    focus = max(0, focus - 1)
-                elif event.key == pygame.K_RIGHT:
-                    focus = min(n - 1, focus + 1)
-                elif event.key == pygame.K_UP:
-                    focus = max(0, focus - cols)
-                elif event.key == pygame.K_DOWN:
-                    focus = min(n - 1, focus + cols)
-                for i, k in enumerate(number_keys):
-                    if event.key == k:
-                        selected = i
-                        focus = i
-                        break
+            comando = read_setup_action(event)
+            if comando == "confirm":
+                return paths[selected]
+            if comando == "cancel":
+                return None
+            if comando == "back":
+                return GO_BACK
+            if comando == "select":
+                selected = focus
+                continue
+            if comando == "up":
+                focus = max(0, focus - 1)
+            elif comando == "down":
+                focus = min(n - 1, focus + 1)
             if event.type == pygame.MOUSEMOTION:
                 for i, r in enumerate(rects):
                     if r.collidepoint(event.pos):
@@ -455,6 +516,9 @@ def select_waypoint_path_interactive(screen, paths, models=()):
                 if cancel_rect.collidepoint(event.pos):
                     flash_button_press(screen, cached_surf, cancel_rect)
                     return None
+                if back_rect.collidepoint(event.pos):
+                    flash_button_press(screen, cached_surf, back_rect)
+                    return GO_BACK
                 for i, r in enumerate(rects):
                     if r.collidepoint(event.pos):
                         selected = i
@@ -464,16 +528,17 @@ def select_waypoint_path_interactive(screen, paths, models=()):
         mouse_pos = pygame.mouse.get_pos()
         cancel_hover = cancel_rect.collidepoint(mouse_pos)
         confirm_hover = confirm_rect.collidepoint(mouse_pos)
+        back_hover = back_rect.collidepoint(mouse_pos)
         enabled = [i == selected for i in range(n)]
         sig = (
             width, height, selected, focus,
-            bool(focused), cancel_hover, confirm_hover,
+            bool(focused), cancel_hover, confirm_hover, back_hover,
         )
         if sig != cache_sig:
             cached_surf = _render_waypoint_screen(
                 width, height, names, descriptions, colors, enabled,
-                focus, focused, rects, confirm_rect, cancel_rect,
-                cancel_hover, confirm_hover, models,
+                focus, focused, rects, confirm_rect, cancel_rect, back_rect,
+                cancel_hover, confirm_hover, back_hover, models,
             )
             cache_sig = sig
 

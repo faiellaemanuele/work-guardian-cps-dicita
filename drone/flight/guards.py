@@ -47,7 +47,7 @@ def apply_battery_guard(
 
     def _warn_low_battery(last_at: float) -> float:
         now_warn = time.monotonic()
-        if now_warn - last_at >= 15.0:
+        if now_warn - last_at >= APP_CONFIG.battery_warning_repeat_after_sec:
             print_event(f"Batteria al {battery}%: conviene atterrare", prefix="AVVISO")
             return now_warn
         return last_at

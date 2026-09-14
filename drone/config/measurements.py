@@ -3,7 +3,7 @@ from __future__ import annotations
 
 WORLD_TAGS_RAW: dict[int, dict[str, tuple[float, float, float]]] = {
     0:  {"position_m": (0.0, 0.0, 0.0),    "orientation_rpy_deg": (0.0, 0.0, 0.0)},
-    1:  {"position_m": (0.0, -2.11, 0.0),  "orientation_rpy_deg": (0.0, 0.0, 0.0)},
+    1:  {"position_m": (0.0, -1.8, 0.0),  "orientation_rpy_deg": (0.0, 0.0, 0.0)},
     2:  {"position_m": (-0.3, 2.96, 1.5),  "orientation_rpy_deg": (-90.0, 0.0, 180.0)},
     3:  {"position_m": (-0.3, -5.07, 1.5), "orientation_rpy_deg": (-90.0, 0.0, 0.0)},
     4:  {"position_m": (1.91, 0.0, 1.65),  "orientation_rpy_deg": (-90.0, 0.0, 90.0)},

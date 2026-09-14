@@ -482,7 +482,6 @@ def test_says_nothing_about_flying_alone_without_a_route():
 
 
 
-
 def _con_controller_rotto(cosa):
     class _Rotto(_Controller):
         rompe = frozenset({cosa})

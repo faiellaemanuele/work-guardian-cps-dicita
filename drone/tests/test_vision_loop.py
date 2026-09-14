@@ -526,12 +526,21 @@ def test_senza_controller_lo_stato_del_joystick_parte_spento():
     assert vl.cached_status["joystick"] is False
 
 
-class _ClientMqtt:
-    def __init__(self):
-        self.pubblicazioni: list[tuple[str, str]] = []
+class _Esito:
+    def __init__(self, rc):
+        self.rc = rc
 
-    def publish(self, topic, payload):
+
+class _ClientMqtt:
+    def __init__(self, rc=0):
+        self.pubblicazioni: list[tuple[str, str]] = []
+        self.qos: list[int] = []
+        self._rc = rc
+
+    def publish(self, topic, payload, qos=0, retain=False):
         self.pubblicazioni.append((topic, payload))
+        self.qos.append(qos)
+        return _Esito(self._rc)
 
 
 @contextlib.contextmanager
@@ -587,12 +596,82 @@ def test_senza_broker_il_volo_prosegue():
 
 def test_un_errore_di_pubblicazione_non_interrompe_il_volo():
     class _Rotto:
-        def publish(self, topic, payload):
+        def publish(self, topic, payload, qos=0, retain=False):
             raise RuntimeError("broker sparito")
 
     vl = _vision_loop()
     with _mqtt_finto(_Rotto()):
         assert vl.publish_state(now=0.0) is False
+
+
+def test_la_telemetria_non_consegnata_non_passa_per_riuscita():
+    vl = _vision_loop()
+    client = _ClientMqtt(rc=4)
+    with _mqtt_finto(client):
+        assert vl.publish_state(now=0.0) is False
+    assert client.pubblicazioni, "il tentativo deve comunque essere stato fatto"
+
+
+def test_l_allarme_va_sul_topic_degli_allarmi_con_qos_1():
+    vl = _vision_loop()
+    client = _ClientMqtt()
+    with _mqtt_finto(client):
+        assert vl.publish_alarm(
+            kind="restricted_area",
+            message="Una persona in un'area vietata",
+            level="critical",
+        ) is True
+
+    topic, carico = client.pubblicazioni[0]
+    assert topic == "cantiere/allarmi"
+    assert client.qos[0] == 1
+    corpo = json.loads(carico)
+    assert corpo["type"] == "restricted_area"
+    assert corpo["level"] == "critical"
+    assert corpo["source"] == "drone"
+    assert corpo["msg"] == "Una persona in un'area vietata"
+
+
+def test_l_allarme_non_ha_target_cosi_lo_riceve_ogni_orologio():
+    vl = _vision_loop()
+    client = _ClientMqtt()
+    with _mqtt_finto(client):
+        vl.publish_alarm(kind="dpi_missing", message="Manca l'elmetto")
+
+    assert "target" not in json.loads(client.pubblicazioni[0][1])
+
+
+def test_l_allarme_a_broker_giu_resta_in_coda_e_non_si_perde():
+    vl = _vision_loop()
+    client = _ClientMqtt(rc=4)
+    with _mqtt_finto(client):
+        assert vl.publish_alarm(kind="fall", message="Caduta") is True
+    assert client.qos[0] == 1, "l'accodamento vale solo con QoS >= 1"
+
+
+def test_un_errore_diverso_dalla_disconnessione_fa_fallire_l_allarme():
+    vl = _vision_loop()
+    with _mqtt_finto(_ClientMqtt(rc=1)):
+        assert vl.publish_alarm(kind="fall", message="Caduta") is False
+
+
+def test_senza_broker_l_allarme_non_blocca_il_volo():
+    vl = _vision_loop()
+    with _mqtt_finto(None):
+        assert vl.publish_alarm(kind="fall", message="Caduta") is False
+
+
+def test_lo_stato_del_joystick_resta_noto_se_la_telemetria_fallisce():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    vl = _vision_loop(status_refresh_sec=0.0)
+    ctrl = _StatusSequenceController([RuntimeError("timeout SDK")])
+    originale = modulo.is_joystick_connected
+    modulo.is_joystick_connected = lambda: True
+    try:
+        vl._refresh_status(ctrl)
+    finally:
+        modulo.is_joystick_connected = originale
+    assert vl.cached_status["joystick"] is True
 
 
 def _run_all() -> int:

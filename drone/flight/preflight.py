@@ -43,7 +43,7 @@ from drone.ui.console import (
     set_alert_sink,
 )
 from drone.ui.setup.effects import fade_screen
-from drone.ui.setup.screens import select_waypoint_path_interactive
+from drone.ui.setup.screens import GO_BACK, select_waypoint_path_interactive
 from drone.ui.setup.welcome import show_welcome_screen
 
 
@@ -147,14 +147,19 @@ def _phase_mission_path(screen):
         _report_missing_waypoint_paths()
         return True, None, screen
 
-    pygame.display.set_caption("Tello - Scelta dello scenario")
-    selected_path = select_waypoint_path_interactive(
-        screen,
-        waypoint_paths,
-        [_model_labels(required_model_names(p)) for p in waypoint_paths],
-    )
-    pygame.display.set_caption(APP_CONFIG.window_title)
-    screen = pygame.display.get_surface()
+    modelli = [_model_labels(required_model_names(p)) for p in waypoint_paths]
+    while True:
+        pygame.display.set_caption("Tello - Scelta dello scenario")
+        selected_path = select_waypoint_path_interactive(screen, waypoint_paths, modelli)
+        pygame.display.set_caption(APP_CONFIG.window_title)
+        screen = pygame.display.get_surface()
+
+        if selected_path is not GO_BACK:
+            break
+
+        if not _phase_welcome(screen):
+            return False, None, pygame.display.get_surface()
+        screen = pygame.display.get_surface()
 
     if selected_path is None:
         print_step("--", "Scelta annullata, chiusura")
@@ -227,7 +232,7 @@ def _build_detectors(model_names) -> list:
 
 
 def _phase_localization(subsystems: Subsystems) -> None:
-    _announce_phase("Fase 3 · Localizzazione")
+    _announce_phase("Fase 3 · Localizzazione e canale")
     pose_estimator = None
     try:
         pose_estimator = create_pose_estimator()

@@ -36,10 +36,9 @@ class FakeControlLoop:
 class FakeVisionLoop:
     def __init__(self, battery):
         self.cached_status = {"battery": battery}
-        self.clear_calls = 0
 
     def clear_autopilot_overlay(self):
-        self.clear_calls += 1
+        pass
 
 
 class FakeAutopilot:

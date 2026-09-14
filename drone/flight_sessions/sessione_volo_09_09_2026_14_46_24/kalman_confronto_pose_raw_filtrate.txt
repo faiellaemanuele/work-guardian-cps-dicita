@@ -1,0 +1,46 @@
+# =============================================================================
+# CONFRONTO POSE APRILTAG RAW E POSE FILTRATE KALMAN
+# =============================================================================
+# Descrizione: tabella per valutare quanto il filtro di Kalman modifica la posa stimata a partire dalle misure grezze degli AprilTag.
+# Generato il: 2026-09-09 14:46:24
+# Formato dati: tabella CSV testuale con separatore ','
+# Nota: le righe che iniziano con '#' sono commenti descrittivi.
+# Separatore degli ID AprilTag multipli: '|'
+#
+# Legenda colonne:
+# - timestamp_s: timestamp assoluto UNIX del campione [s]
+# - tempo_relativo_s: tempo trascorso dal primo campione del file [s]
+# - raw_x_m: coordinata X della posa grezza AprilTag [m]
+# - raw_y_m: coordinata Y della posa grezza AprilTag [m]
+# - raw_z_m: coordinata Z della posa grezza AprilTag [m]
+# - raw_yaw_deg: yaw associato alla posa grezza AprilTag [deg]
+# - kalman_x_m: coordinata X dopo filtraggio di Kalman [m]
+# - kalman_y_m: coordinata Y dopo filtraggio di Kalman [m]
+# - kalman_z_m: coordinata Z dopo filtraggio di Kalman [m]
+# - kalman_yaw_deg: yaw filtrato da Kalman se yaw_filter_enabled=True, altrimenti corrisponde a quello grezzo [deg]
+# - errore_x_m: differenza kalman_x_m - raw_x_m [m]
+# - errore_y_m: differenza kalman_y_m - raw_y_m [m]
+# - errore_z_m: differenza kalman_z_m - raw_z_m [m]
+# - norma_errore_m: norma euclidea della correzione introdotta dal filtro [m]
+# - tag_ids: ID degli AprilTag usati per la stima, separati dal carattere indicato sopra
+# - sorgente_raw: descrizione della sorgente della posa grezza
+# - sorgente_kalman: descrizione della sorgente della posa filtrata
+# - outlier_scartato: true se il filtro di Kalman ha scartato la misura grezza: la posa filtrata e' solo la previsione
+# =============================================================================
+
+timestamp_s,tempo_relativo_s,raw_x_m,raw_y_m,raw_z_m,raw_yaw_deg,kalman_x_m,kalman_y_m,kalman_z_m,kalman_yaw_deg,errore_x_m,errore_y_m,errore_z_m,norma_errore_m,tag_ids,sorgente_raw,sorgente_kalman,outlier_scartato
+1788957976.298,0.000,1.856,-1.556,2.837,0.575,1.856,-1.556,2.837,0.575,0.000,0.000,0.000,0.000,10,weighted_average,kalman(weighted_average),false
+
+# =============================================================================
+# Statistiche sessione  (campioni: 1)
+# raw_x: min=1.8560  max=1.8560  media=1.8560
+# raw_y: min=-1.5561  max=-1.5561  media=-1.5561
+# raw_z: min=2.8366  max=2.8366  media=2.8366
+# raw_yaw_deg: min=0.5745  max=0.5745  media=0.5745
+# filtered_x: min=1.8560  max=1.8560  media=1.8560
+# filtered_y: min=-1.5561  max=-1.5561  media=-1.5561
+# filtered_z: min=2.8366  max=2.8366  media=2.8366
+# filtered_yaw_deg: min=0.5745  max=0.5745  media=0.5745
+# error_norm: min=0.0000  max=0.0000  media=0.0000
+# Nota: per le colonne di yaw assoluto min/max sono estremi del wrap-around +/-180 deg, non l'ampiezza reale; la media e' circolare.
+# =============================================================================

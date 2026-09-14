@@ -8,10 +8,35 @@ Questo file contiene i passaggi necessari per collegare il Drone Tello al Server
 - Identificare l'indirizzo IP del PC-Server (es. `192.168.137.1`).
 
 ## 2. Modifica al Codice (PC Drone)
-Nel file `main.py`, andare alla riga 347 e sostituire `"localhost"` con l'IP identificato sopra:
-`mqtt_client.connect("192.168.137.1", 1883, 60)`
+L'indirizzo del broker sta in `drone/config/app_config.py`, nel campo
+`mqtt_broker_ip` della classe `AppConfig`. Il valore predefinito e' proprio
+`192.168.137.1`: se l'hotspot assegna l'IP identificato sopra non c'e' niente da
+cambiare, altrimenti si sostituisce lì (la porta e' `mqtt_broker_port`, 1883).
+Con un indirizzo sbagliato il drone vola normalmente e pubblica nel vuoto: la
+sola traccia e' un avviso "MQTT | Canale non disponibile" nel log.
 
 ## 3. Sequenza di Avvio
 1. **PC Server**: Avviare Mosquitto (`mosquitto -v`).
 2. **PC Server**: Avviare il server Python (`python brain/server_cps.py`).
-3. **PC Drone**: Avviare lo script principale (`python main.py`).
+3. **PC Drone**: Avviare l'applicazione (`python drone/main.py`).
+
+Il server e i simulatori girano sullo stesso PC del broker, quindi usano
+`localhost`. Per puntarli altrove si usano le variabili d'ambiente
+`WG_MQTT_BROKER` e `WG_MQTT_PORT` (non serve modificare il codice):
+   set WG_MQTT_BROKER=192.168.137.1
+   python brain/server_cps.py
+
+Per provare la catena senza drone ne' orologio, al posto del punto 3:
+   `python simulators/mock_devices.py`      (pubblica telemetria finta)
+   `python simulators/mock_smartwatch.py`   (mostra gli allarmi ricevuti)
+
+## 4. Che cosa arriva all'orologio
+Sul topic `cantiere/allarmi` pubblicano DUE mittenti:
+- il **drone**, per gli allarmi che calcola a bordo durante le soste di
+  supervisione: superamento di area interdetta e caduta (critici), DPI mancanti
+  (avviso). Hanno gia' il loro filtro anti-rimbalzo nei monitor di bordo.
+- il **server**, per la persona vista in area di scavo e per il battito alto,
+  con una pausa di 10 s per non far vibrare l'orologio senza interruzione.
+
+Il server sopravvive a un messaggio malformato (lo scarta e lo scrive come
+[ERR]) e si riconnette da solo se Mosquitto si riavvia.

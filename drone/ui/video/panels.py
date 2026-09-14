@@ -269,7 +269,7 @@ def _draw_note(img, draw, text: str, x: Optional[int] = None) -> None:
     x0 = _PAD if x is None else int(x)
     font = fonts.mono(_FONT_SIZE)
     char_w = _mono_char_width(font)
-    max_chars = max(1, int((img.width - _PAD - x0) / char_w)) if char_w > 0 else len(text)
+    max_chars = max(1, int((img.width - _PAD - x0) / char_w)) if char_w > 0 else 60
     y = _HEADER_H + _PAD + 6
     for piece in _wrap_text(text, max_chars):
         draw.text((x0, y), piece, font=font, fill=_MUTED)

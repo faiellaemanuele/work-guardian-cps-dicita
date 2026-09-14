@@ -47,6 +47,11 @@ class JoystickMapping:
     button_scenario: int = 9
     button_quit: int = 6
 
+    button_setup_select: int = 0
+    button_setup_back: int = 9
+    button_setup_confirm: int = 10
+    button_setup_cancel: int = 4
+
     axis_lr: int = 0
     axis_fb: int = 1
     axis_yaw: int = 2
@@ -60,6 +65,10 @@ class JoystickMapping:
     label_autonomy: str = "Triangolo"
     label_scenario: str = "L1"
     label_quit: str = "Options"
+
+    label_setup_back: str = "L1"
+    label_setup_confirm: str = "R1"
+    label_setup_cancel: str = "Share"
 
     label_axis_lr: str = "Stick sinistro orizzontale"
     label_axis_fb: str = "Stick sinistro verticale"
@@ -110,7 +119,7 @@ class CameraPoseConfig:
     pose_error_relative_factor: float = 5.0
     pose_error_absolute_max: float | None = None
 
-    max_tag_distance_m: float | None = 3.5
+    max_tag_distance_m: float | None = 5.5
 
     camera_matrix: tuple[
         tuple[float, float, float],
@@ -286,9 +295,11 @@ class AppConfig:
     apriltag_autopilot: AprilTagAutopilotConfig = field(default_factory=AprilTagAutopilotConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
-    mqtt_broker_ip: str = "192.168.1.50"
+    mqtt_broker_ip: str = "192.168.137.1"
     mqtt_broker_port: int = 1883
     mqtt_publish_interval_sec: float = 0.5
+
+    battery_warning_repeat_after_sec: float = 15.0
 
     def __post_init__(self):
         if self.battery_warning_pct <= self.battery_critical_pct:

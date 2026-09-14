@@ -8,7 +8,7 @@ PROJECT_TITLE: str = "WORK GUARDIAN"
 
 ASSETS_DIR: Path = Path(__file__).resolve().parent / "assets"
 
-LOGO_GLOB: str = "logo_work_guardian.*"
+LOGO_GLOB: str = "banner_work_guardian.*"
 
 WINDOW_TITLE: str = "Tello - Pilotaggio manuale"
 

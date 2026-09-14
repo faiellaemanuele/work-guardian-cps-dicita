@@ -1,0 +1,21 @@
+# Serve Python 3.10 o superiore.
+#
+# Le dipendenze si installano dalla radice, con un comando solo:
+#
+#     pip install -r requirements.txt
+
+djitellopy
+pygame
+opencv-contrib-python
+pyapriltags
+numpy
+ultralytics
+torch
+torchvision
+Pillow
+matplotlib
+openpyxl
+paho-mqtt>=1.6
+aiomqtt
+supervision>=0.30
+pandas

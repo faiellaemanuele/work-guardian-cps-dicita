@@ -5,10 +5,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+from PIL import Image
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from drone.config import APP_CONFIG
-from drone.hardware.joystick import joystick_actions, joystick_axis_actions
+from drone.hardware.joystick import (
+    joystick_action_groups,
+    joystick_actions,
+    joystick_axis_actions,
+    joystick_axis_details,
+)
 from drone.ui import fonts
 from drone.ui.setup import welcome
 
@@ -39,6 +46,30 @@ def test_the_command_table_comes_from_the_joystick_module():
     assert len(joystick_axis_actions()) == 4
 
 
+def test_the_groups_hold_every_command_of_the_flat_table():
+    raggruppate = [riga for _sezione, righe in joystick_action_groups() for riga in righe]
+    assert raggruppate == list(joystick_actions())
+    assert len(joystick_action_groups()) == 3
+
+
+def test_every_button_of_the_card_has_a_shape_or_falls_back_to_a_key():
+    forme = {
+        tasto: welcome._GLYPH_COLORS.get(tasto)
+        for tasto, _azione in joystick_actions()
+    }
+    assert forme[APP_CONFIG.joystick.label_takeoff] is not None
+    assert forme[APP_CONFIG.joystick.label_scenario] is None
+
+
+def test_the_axes_say_which_stick_and_which_way():
+    dettagli = joystick_axis_details()
+    assert len(dettagli) == len(joystick_axis_actions())
+    assert {lato for lato, _verso, _azione in dettagli} == {"L", "R"}
+    assert {verso for _lato, verso, _azione in dettagli} == {"orizzontale", "verticale"}
+    azioni_dettagli = [azione for _lato, _verso, azione in dettagli]
+    assert azioni_dettagli == [azione for _tasto, azione in joystick_axis_actions()]
+
+
 def test_wrapping_keeps_every_word_within_the_width():
     font = fonts.sans(20)
     testo = " ".join(["parola"] * 40)
@@ -53,21 +84,72 @@ def test_a_single_word_too_long_is_not_lost():
     assert righe == ["interminabile" * 6]
 
 
-def test_the_logo_is_masked_into_a_circle():
+_MISURE_FINESTRA = (
+    (960, 720),
+    (1280, 600),
+    (1366, 728),
+    (1536, 824),
+    (1920, 1032),
+    (1920, 1080),
+    (2560, 1392),
+)
+
+
+def test_the_buttons_name_the_keys_of_the_mapping():
+    m = APP_CONFIG.joystick
+    assert welcome.start_label() == f"Inizia ({m.label_setup_confirm})"
+    assert welcome.exit_label() == f"Esci ({m.label_setup_cancel})"
+    for etichetta in (welcome.start_label(), welcome.exit_label()):
+        assert "(Esc)" not in etichetta
+        assert "(Invio)" not in etichetta
+
+
+def test_the_cards_hold_their_text_at_every_window_size():
+    try:
+        for larghezza, altezza in _MISURE_FINESTRA:
+            _inizia, esci = welcome.button_rects(larghezza, altezza)
+            fonts_map, geometria = welcome._fit_layout(larghezza, altezza, esci.y)
+            assert welcome._layout_fits(geometria, fonts_map), f"{larghezza}x{altezza}"
+    finally:
+        welcome._LAYOUT_SCALE = 1.0
+
+
+def test_the_buttons_stay_inside_the_window_and_above_the_cards():
+    try:
+        for larghezza, altezza in _MISURE_FINESTRA:
+            inizia, esci = welcome.button_rects(larghezza, altezza)
+            assert inizia.right <= larghezza
+            assert inizia.bottom <= altezza
+            assert esci.right <= inizia.x
+            _fonts_map, geometria = welcome._fit_layout(larghezza, altezza, esci.y)
+            assert geometria["bottom"] <= esci.y * welcome._SUPERSAMPLE
+    finally:
+        welcome._LAYOUT_SCALE = 1.0
+
+
+def test_the_banner_keeps_its_proportions_and_is_not_cropped():
     if welcome._logo_file() is None:
         return
-    welcome._LOGO_CACHE.clear()
-    logo = welcome._logo_image(64)
-    assert logo is not None
-    assert logo.size == (64, 64)
-    assert logo.mode == "RGBA"
-    assert logo.getpixel((1, 1))[3] == 0
-    assert logo.getpixel((32, 32))[3] == 255
+    welcome._BANNER_CACHE.clear()
+    originale = Image.open(welcome._logo_file())
+    banner = welcome._logo_image(300)
+    assert banner is not None
+    assert banner.width == 300
+    atteso = round(300 * originale.height / originale.width)
+    assert abs(banner.height - atteso) <= 1
+    assert banner.height < banner.width
 
 
-def test_without_the_asset_there_is_no_logo():
+def test_the_banner_asset_is_the_one_named_in_the_appearance():
+    percorso = welcome._logo_file()
+    if percorso is None:
+        return
+    assert "banner" in percorso.name
+
+
+def test_without_the_asset_there_is_no_banner():
     originale = welcome.ASSETS_DIR
-    welcome._LOGO_CACHE.clear()
+    welcome._BANNER_CACHE.clear()
     try:
         with tempfile.TemporaryDirectory() as vuota:
             welcome.ASSETS_DIR = Path(vuota)
@@ -75,7 +157,7 @@ def test_without_the_asset_there_is_no_logo():
             assert welcome._logo_image(64) is None
     finally:
         welcome.ASSETS_DIR = originale
-        welcome._LOGO_CACHE.clear()
+        welcome._BANNER_CACHE.clear()
 
 
 def _run_all() -> int:

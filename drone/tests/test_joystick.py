@@ -123,7 +123,7 @@ def test_every_label_leaves_a_visible_gap_before_its_action():
 
 def test_actions_are_verbs_like_the_onboard_functions():
     testo = format_joystick_help()
-    for verbo in ("decolla", "atterra", "accende e spegne", "chiude la sessione",
+    for verbo in ("decolla", "atterra", "attiva e disattiva", "chiude la sessione",
                   "trasla", "avanza", "sale e scende", "ruota"):
         assert verbo in testo
     assert "Movimento" in testo
@@ -354,6 +354,78 @@ def test_the_scenario_button_has_its_own_index():
         m.button_autonomy, m.button_scenario, m.button_quit,
     ]
     assert len(set(indici)) == len(indici)
+
+
+def test_the_setup_buttons_do_not_collide_with_one_another():
+    m = APP_CONFIG.joystick
+    indici = [
+        m.button_setup_select, m.button_setup_back,
+        m.button_setup_confirm, m.button_setup_cancel,
+    ]
+    assert len(set(indici)) == len(indici)
+
+
+def test_going_back_in_the_screens_is_the_same_button_as_the_scenario():
+    m = APP_CONFIG.joystick
+    assert m.button_setup_back == m.button_scenario
+    assert m.label_setup_back == m.label_scenario
+
+
+def _azione_setup(evento, controller_collegati=1):
+    originale_count = pygame.joystick.get_count
+    precedente = jt._JOYSTICK
+    jt._JOYSTICK = _JoystickFinto()
+    pygame.joystick.get_count = lambda: controller_collegati
+    try:
+        return jt.read_setup_action(evento)
+    finally:
+        pygame.joystick.get_count = originale_count
+        jt._JOYSTICK = precedente
+
+
+def test_the_setup_screens_read_their_own_buttons():
+    m = APP_CONFIG.joystick
+    atteso = {
+        m.button_setup_confirm: "confirm",
+        m.button_setup_cancel: "cancel",
+        m.button_setup_back: "back",
+        m.button_setup_select: "select",
+    }
+    for indice, azione in atteso.items():
+        assert _azione_setup(_premuto(indice)) == azione, azione
+
+    assert _azione_setup(_premuto(max(atteso) + 7)) is None
+
+
+def test_the_setup_screens_navigate_with_the_hat():
+    def hat(valore):
+        return _evento(pygame.JOYHATMOTION, value=valore, instance_id=3)
+
+    assert _azione_setup(hat((0, 1))) == "up"
+    assert _azione_setup(hat((0, -1))) == "down"
+    assert _azione_setup(hat((1, 0))) is None
+
+
+def test_the_stick_moves_the_focus_one_step_per_push():
+    asse = APP_CONFIG.joystick.axis_fb
+    jt._setup_nav_armed = True
+
+    def spinta(valore, indice=None):
+        return _evento(
+            pygame.JOYAXISMOTION,
+            axis=asse if indice is None else indice,
+            value=valore,
+            instance_id=3,
+        )
+
+    try:
+        assert _azione_setup(spinta(0.9)) == "down"
+        assert _azione_setup(spinta(0.95)) is None
+        assert _azione_setup(spinta(0.0)) is None
+        assert _azione_setup(spinta(-0.9)) == "up"
+        assert _azione_setup(spinta(0.9, indice=asse + 1)) is None
+    finally:
+        jt._setup_nav_armed = True
 
 
 def _run_all() -> int:

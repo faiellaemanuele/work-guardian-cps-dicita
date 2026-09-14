@@ -13,7 +13,6 @@ class FakeAutopilot:
         self.finished = finished
         self.current_waypoint_index = waypoint_index
         self.reset_called = False
-        self.cancel_supervision_stop_called = False
 
     def reset(self):
         self.reset_called = True
@@ -21,7 +20,7 @@ class FakeAutopilot:
         self.current_waypoint_index = 0
 
     def cancel_supervision_stop(self):
-        self.cancel_supervision_stop_called = True
+        pass
 
 
 class FakeController:

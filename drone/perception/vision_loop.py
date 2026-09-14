@@ -27,9 +27,20 @@ LOGGER = logging.getLogger(__name__)
 VIDEO_WINDOW_TITLE = APP_CONFIG.video_window_title
 
 MQTT_TOPIC_DRONE = "cantiere/sensori/drone"
+MQTT_TOPIC_ALARMS = "cantiere/allarmi"
+MQTT_TOPIC_STATUS = "cantiere/sistema/drone/status"
+
+_MQTT_ERR_NO_CONN = 4
 
 _MQTT_NON_CREATO = object()
 _mqtt_singleton = _MQTT_NON_CREATO
+
+
+def _on_mqtt_connect(client, *_args) -> None:
+    try:
+        client.publish(MQTT_TOPIC_STATUS, "online", qos=1, retain=True)
+    except Exception:
+        LOGGER.warning("MQTT | Presenza 'online' non pubblicata.", exc_info=True)
 
 
 def _mqtt_client():
@@ -46,6 +57,8 @@ def _mqtt_client():
         except (AttributeError, TypeError):
             client = mqtt.Client()
         client.reconnect_delay_set(min_delay=1, max_delay=30)
+        client.will_set(MQTT_TOPIC_STATUS, "offline", qos=1, retain=True)
+        client.on_connect = _on_mqtt_connect
         client.connect_async(APP_CONFIG.mqtt_broker_ip, APP_CONFIG.mqtt_broker_port, 30)
         client.loop_start()
         _mqtt_singleton = client
@@ -66,6 +79,7 @@ def stop_mqtt_client() -> None:
     if client is None or client is _MQTT_NON_CREATO:
         return
     try:
+        client.publish(MQTT_TOPIC_STATUS, "offline", qos=1, retain=True)
         client.disconnect()
         client.loop_stop()
     except Exception:
@@ -195,6 +209,7 @@ class VisionLoop:
             )
             self.cached_status = {
                 "connected": False,
+                "joystick": is_joystick_connected(),
                 "flying": False,
                 "battery": previous_battery,
             }
@@ -277,11 +292,52 @@ class VisionLoop:
         self._last_mqtt_publish_at = now
         try:
             payload = json.dumps(self._build_mqtt_payload())
-            client.publish(MQTT_TOPIC_DRONE, payload)
+            info = client.publish(MQTT_TOPIC_DRONE, payload)
         except Exception:
             LOGGER.warning("MQTT | Telemetria non pubblicata.", exc_info=True)
             return False
+        if getattr(info, "rc", 0) != 0:
+            self._throttled_warning(
+                "mqtt_publish",
+                f"MQTT | Telemetria non consegnata (rc={info.rc}): "
+                f"broker {APP_CONFIG.mqtt_broker_ip}:{APP_CONFIG.mqtt_broker_port} "
+                "non raggiungibile.",
+            )
+            return False
         return True
+
+    def publish_alarm(self, *, kind: str, message: str, level: str = "warning") -> bool:
+        client = _mqtt_client()
+        if client is None:
+            return False
+
+        try:
+            payload = json.dumps(
+                {
+                    "source": "drone",
+                    "type": kind,
+                    "level": level,
+                    "msg": message,
+                }
+            )
+            info = client.publish(MQTT_TOPIC_ALARMS, payload, qos=1)
+        except Exception:
+            LOGGER.warning("MQTT | Allarme non pubblicato.", exc_info=True)
+            return False
+
+        rc = getattr(info, "rc", 0)
+        if rc == 0:
+            return True
+
+        # A differenza della telemetria (QoS 0, che a client disconnesso viene
+        # buttata), l'allarme va a QoS 1: paho lo accoda e lo consegna quando la
+        # connessione torna. Quindi non e' perso, ma il canale va segnalato.
+        self._throttled_warning(
+            "mqtt_alarm",
+            f"MQTT | Broker non raggiungibile (rc={rc}): "
+            "allarme in coda, verra' consegnato alla riconnessione.",
+        )
+        return rc == _MQTT_ERR_NO_CONN
 
     def _build_mqtt_payload(self) -> dict:
         pose = self.get_latest_pose_estimate()

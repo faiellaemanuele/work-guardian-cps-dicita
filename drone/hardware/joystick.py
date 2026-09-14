@@ -247,6 +247,65 @@ def read_events():
     return actions
 
 
+_SETUP_NAV_ENTER = 0.6
+_SETUP_NAV_EXIT = 0.3
+
+_setup_nav_armed = True
+
+
+def _setup_button_action(button, mapping):
+    if button == mapping.button_setup_confirm:
+        return "confirm"
+    if button == mapping.button_setup_cancel:
+        return "cancel"
+    if button == mapping.button_setup_back:
+        return "back"
+    if button == mapping.button_setup_select:
+        return "select"
+    return None
+
+
+def _setup_axis_action(value):
+    global _setup_nav_armed
+
+    if abs(value) < _SETUP_NAV_EXIT:
+        _setup_nav_armed = True
+        return None
+    if not _setup_nav_armed or abs(value) < _SETUP_NAV_ENTER:
+        return None
+    _setup_nav_armed = False
+    return "down" if value > 0 else "up"
+
+
+def read_setup_action(event):
+    mapping = APP_CONFIG.joystick
+
+    if event.type == pygame.JOYBUTTONDOWN:
+        if not _event_matches_active_joystick(event, *_active_joystick_ids()):
+            return None
+        return _setup_button_action(event.button, mapping)
+
+    if event.type == pygame.JOYHATMOTION:
+        if not _event_matches_active_joystick(event, *_active_joystick_ids()):
+            return None
+        valore = getattr(event, "value", (0, 0))
+        if len(valore) < 2 or valore[1] == 0:
+            return None
+        return "up" if valore[1] > 0 else "down"
+
+    if event.type == pygame.JOYAXISMOTION:
+        if event.axis != mapping.axis_fb:
+            return None
+        if not _event_matches_active_joystick(event, *_active_joystick_ids()):
+            return None
+        return _setup_axis_action(event.value)
+
+    if event.type == pygame.JOYDEVICEADDED:
+        _handle_device_added(event)
+
+    return None
+
+
 def _zero_command():
     return {
         "lr": 0,
@@ -309,25 +368,59 @@ def get_command(speed_pct=50):
     }
 
 
-def joystick_actions() -> tuple[tuple[str, str], ...]:
+_ACTION_GROUPS = (
+    (
+        "VOLO",
+        (
+            ("label_takeoff", "decolla"),
+            ("label_land", "atterra"),
+        ),
+    ),
+    (
+        "SUPERVISIONE",
+        (
+            ("label_detection", "attiva e disattiva il riconoscimento"),
+            ("label_autonomy", "attiva e disattiva il volo autonomo"),
+        ),
+    ),
+    (
+        "SESSIONE",
+        (
+            ("label_scenario", "quando il drone è a terra, torna alla schermata precedente"),
+            ("label_quit", "chiude la sessione"),
+        ),
+    ),
+)
+
+_AXIS_DETAILS = (
+    ("label_axis_lr", "L", "orizzontale", "trasla a sinistra e a destra"),
+    ("label_axis_fb", "L", "verticale", "avanza e indietreggia"),
+    ("label_axis_ud", "R", "verticale", "sale e scende"),
+    ("label_axis_yaw", "R", "orizzontale", "ruota su sé stesso"),
+)
+
+
+def joystick_action_groups() -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
     mapping = APP_CONFIG.joystick
-    return (
-        (mapping.label_takeoff, "decolla"),
-        (mapping.label_land, "atterra"),
-        (mapping.label_detection, "accende e spegne il riconoscimento"),
-        (mapping.label_autonomy, "accende e spegne il volo autonomo"),
-        (mapping.label_scenario, "a terra, torna alla scelta dello scenario"),
-        (mapping.label_quit, "chiude la sessione"),
+    return tuple(
+        (sezione, tuple((getattr(mapping, attributo), azione) for attributo, azione in righe))
+        for sezione, righe in _ACTION_GROUPS
     )
+
+
+def joystick_actions() -> tuple[tuple[str, str], ...]:
+    return tuple(riga for _sezione, righe in joystick_action_groups() for riga in righe)
+
+
+def joystick_axis_details() -> tuple[tuple[str, str, str], ...]:
+    return tuple((lato, verso, azione) for _attributo, lato, verso, azione in _AXIS_DETAILS)
 
 
 def joystick_axis_actions() -> tuple[tuple[str, str], ...]:
     mapping = APP_CONFIG.joystick
-    return (
-        (mapping.label_axis_lr, "trasla a sinistra e a destra"),
-        (mapping.label_axis_fb, "avanza e indietreggia"),
-        (mapping.label_axis_ud, "sale e scende"),
-        (mapping.label_axis_yaw, "ruota su sé stesso"),
+    return tuple(
+        (getattr(mapping, attributo), azione)
+        for attributo, _lato, _verso, azione in _AXIS_DETAILS
     )
 
 

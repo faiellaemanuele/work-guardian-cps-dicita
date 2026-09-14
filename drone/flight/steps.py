@@ -45,9 +45,26 @@ def _emit_safety_net_verdict(verdict: dict) -> None:
         )
 
 
-def _emit_surveillance_alert(alert: dict) -> None:
+_ALARM_LEVELS = {
+    "restricted_area": "critical",
+    "fall": "critical",
+    "dpi_missing": "warning",
+}
+
+
+def _emit_surveillance_alert(alert: dict, vision_loop) -> None:
     message = str(alert.get("message") or alert.get("title") or "Pericolo rilevato")
     print_event(message, prefix="AVVISO", channel="alert")
+
+    kind = str(alert.get("type") or "surveillance")
+    try:
+        vision_loop.publish_alarm(
+            kind=kind,
+            message=message,
+            level=_ALARM_LEVELS.get(kind, "warning"),
+        )
+    except Exception:
+        LOGGER.warning("Allarme di sorveglianza non inoltrato sul canale.", exc_info=True)
 
 
 def handle_person_step(*, person_monitor, vision_loop, pilot_commands) -> None:
@@ -63,7 +80,7 @@ def handle_person_step(*, person_monitor, vision_loop, pilot_commands) -> None:
         supervision_active=supervision_active,
     )
     for alarm in alarms:
-        _emit_surveillance_alert(alarm)
+        _emit_surveillance_alert(alarm, vision_loop)
 
 
 def handle_dpi_step(*, dpi_monitor, vision_loop, pilot_commands) -> None:
@@ -79,7 +96,7 @@ def handle_dpi_step(*, dpi_monitor, vision_loop, pilot_commands) -> None:
         supervision_active=supervision_active,
     )
     for alarm in alarms:
-        _emit_surveillance_alert(alarm)
+        _emit_surveillance_alert(alarm, vision_loop)
 
 
 def handle_autonomy_step(
