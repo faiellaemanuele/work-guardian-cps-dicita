@@ -51,7 +51,7 @@ class FlightDataLogger:
         self._error_log_throttle_sec = 5.0
         self._error_log_last_at: dict[str, float] = {}
 
-        LOGGER.info("Registro dati di volo avviato | cartella=%s", self.output_dir)
+        LOGGER.info("La registrazione dei dati di volo è stata avviata nella cartella %s", self.output_dir)
 
     @staticmethod
     def _get_mapping_value(mapping: Optional[Mapping[str, Any]], key: str, default: Any = None) -> Any:
@@ -85,13 +85,12 @@ class FlightDataLogger:
             already_warned = self._autopilot_cap_warned
             self._autopilot_cap_warned = True
         if not already_warned:
+            serie = "di posizione" if buffer_label == "comparison" else "dell'autopilota"
             LOGGER.warning(
-                "Registro dati di volo: raggiunto il limite di %d campioni per la serie "
-                "'%s' (flight_log_max_samples). Si conservano gli ultimi %d campioni: "
-                "i più vecchi vengono scartati per limitare la memoria.",
+                "La memoria dei dati di volo è piena (%d campioni %s): da ora in poi "
+                "vengono scartati i campioni più vecchi",
                 self._max_samples,
-                buffer_label,
-                self._max_samples,
+                serie,
             )
 
     def _throttled_error_log(self, key: str, message: str) -> None:
@@ -179,7 +178,7 @@ class FlightDataLogger:
         except Exception:
             self._throttled_error_log(
                 "log_pose_pair",
-                "Errore durante la registrazione della coppia raw/filtered.",
+                "Non è stato possibile registrare la posizione grezza e quella filtrata",
             )
             return False
 
@@ -312,7 +311,7 @@ class FlightDataLogger:
         except Exception:
             self._throttled_error_log(
                 "log_autopilot_step",
-                "Errore durante la registrazione del campione autopilota.",
+                "Non è stato possibile registrare il campione dell'autopilota",
             )
             return False
 
@@ -349,7 +348,7 @@ class FlightDataLogger:
                 )
 
         except Exception:
-            LOGGER.exception("Errore durante il salvataggio dei file di testo.")
+            LOGGER.exception("Non è stato possibile salvare i file di testo della sessione")
 
         return saved_paths
 
@@ -385,8 +384,8 @@ class FlightDataLogger:
             )
         except Exception:
             LOGGER.exception(
-                "Errore nella scrittura del file Excel della sessione: "
-                "si ripiega sui file di testo."
+                "Non è stato possibile scrivere il file Excel della sessione: "
+                "vengono salvati i file di testo"
             )
             return None
 
@@ -426,14 +425,14 @@ class FlightDataLogger:
                 self.save_plots(session_dir)
             except Exception:
                 LOGGER.exception(
-                    "Errore durante la generazione dei grafici: "
-                    "i dati della sessione restano salvati."
+                    "Non è stato possibile generare i grafici: i dati della sessione "
+                    "restano comunque salvati"
                 )
 
             return session_dir
 
         except Exception:
-            LOGGER.exception("Errore durante l'esportazione della sessione di volo.")
+            LOGGER.exception("Non è stato possibile esportare la sessione di volo")
             return None
 
     @staticmethod
@@ -447,7 +446,7 @@ class FlightDataLogger:
             parti.append(f"{secondi} secondo" if secondi == 1 else f"{secondi} secondi")
         return " e ".join(parti)
 
-    def _format_session(self, entries, titolo: str, contenuto: str) -> str:
+    def _format_session(self, entries, contesto: str, contenuto: str) -> str:
         start_time = entries[0]["timestamp"]
         end_time = entries[-1]["timestamp"]
         duration = end_time - start_time
@@ -457,14 +456,18 @@ class FlightDataLogger:
         if total > 1 and duration > 0:
             passo = duration / (total - 1)
             cadenza = (
-                f", una ogni {passo * 1000:.0f} millisecondi"
+                f", uno ogni {passo * 1000:.0f} millisecondi"
                 if passo < 1.0
-                else f", una ogni {passo:.1f} secondi"
+                else f", uno ogni {passo:.1f} secondi".replace(".", ",")
             )
-        nome = "istantanee" if total != 1 else "istantanea"
+        registrati = (
+            f"è stato registrato 1 campione {contenuto}"
+            if total == 1
+            else f"sono stati registrati {total} campioni {contenuto}{cadenza}"
+        )
         return (
-            f"{titolo}: {total} {nome} {contenuto}{cadenza}\n"
-            f"Durata: {self._format_duration(duration)}, "
+            f"{contesto} {registrati}\n"
+            f"Il volo è durato {self._format_duration(duration)}, "
             f"dalle {time.strftime('%H:%M:%S', time.localtime(start_time))} "
             f"alle {time.strftime('%H:%M:%S', time.localtime(end_time))}"
         )
@@ -472,12 +475,12 @@ class FlightDataLogger:
     def get_summary(self) -> str:
         if self.autopilot_entries:
             return self._format_session(
-                self.autopilot_entries, "Volo autonomo", "di posizione e comandi",
+                self.autopilot_entries, "Durante il volo autonomo", "di posizione e di comando",
             )
 
         if self.comparison_entries:
             return self._format_session(
-                self.comparison_entries, "Volo", "di posizione, grezza e filtrata",
+                self.comparison_entries, "Durante il volo", "della posizione grezza e filtrata",
             )
 
-        return "Nessun dato registrato"
+        return "Non è stato registrato alcun dato"

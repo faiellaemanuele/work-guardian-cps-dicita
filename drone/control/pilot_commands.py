@@ -56,7 +56,7 @@ class PilotCommands:
         try:
             self.controller.send_rc_control(0, 0, 0, 0)
         except Exception:
-            LOGGER.warning("Impossibile azzerare i comandi RC alla disattivazione dell'autonomia.", exc_info=True)
+            LOGGER.warning("Non è stato possibile azzerare i comandi di movimento alla disattivazione del volo autonomo", exc_info=True)
 
     def step(self) -> bool:
         actions = read_events()
@@ -111,7 +111,7 @@ class PilotCommands:
                     try:
                         self.controller.send_rc_control(0, 0, 0, 0)
                     except Exception:
-                        LOGGER.warning("Impossibile azzerare i comandi RC dopo il cambio di stato dell'autonomia.", exc_info=True)
+                        LOGGER.warning("Non è stato possibile azzerare i comandi di movimento al cambio di modalità di volo", exc_info=True)
 
         if actions["scenario"]:
             if self.controller.is_flying:
@@ -127,7 +127,7 @@ class PilotCommands:
             try:
                 self.controller.send_rc_control(0, 0, 0, 0)
             except Exception:
-                LOGGER.warning("Impossibile azzerare i comandi RC all'uscita.", exc_info=True)
+                LOGGER.warning("Non è stato possibile azzerare i comandi di movimento all'uscita dal programma", exc_info=True)
             print_event("Uscita richiesta")
             return False
 
@@ -143,5 +143,5 @@ class PilotCommands:
                 command["yaw"],
             )
         except Exception:
-            LOGGER.warning("Errore durante l'invio dei comandi RC manuali.", exc_info=True)
+            LOGGER.warning("Non è stato possibile inviare al drone i comandi del controller", exc_info=True)
         return command

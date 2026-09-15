@@ -318,9 +318,8 @@ class CameraPoseEstimator:
 
         if math.hypot(fwd_x, fwd_y) < 1e-6:
             LOGGER.warning(
-                "Yaw mondo non osservabile: l'asse in avanti '%s' è quasi verticale. "
-                "Rilevazione esclusa dalla fusione per questo frame.",
-                axis_name,
+                "Non è stato possibile ricavare l'orientamento da un marker AprilTag, "
+                "che viene escluso dal calcolo della posizione"
             )
             return None
 
@@ -667,7 +666,7 @@ class CameraPoseEstimator:
         try:
             detections = self._detect_tags(frame_for_detection)
         except Exception:
-            LOGGER.exception("Errore durante il rilevamento degli AprilTag.")
+            LOGGER.exception("La ricerca dei marker AprilTag non è riuscita sull'immagine corrente")
             self._reset_last_pose()
             return output_frame, []
 
@@ -686,7 +685,7 @@ class CameraPoseEstimator:
                     absolute_body_hypotheses,
                 )
             except Exception:
-                LOGGER.exception("Errore durante l'elaborazione della posa AprilTag.")
+                LOGGER.exception("Non è stato possibile ricavare la posizione da un marker AprilTag, che viene ignorato")
                 continue
 
         absolute_camera_hypotheses, absolute_body_hypotheses = self._apply_quality_gates(

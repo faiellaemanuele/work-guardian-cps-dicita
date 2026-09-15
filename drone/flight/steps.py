@@ -64,7 +64,7 @@ def _emit_surveillance_alert(alert: dict, vision_loop) -> None:
             level=_ALARM_LEVELS.get(kind, "warning"),
         )
     except Exception:
-        LOGGER.warning("Allarme di sorveglianza non inoltrato sul canale.", exc_info=True)
+        LOGGER.warning("Non è stato possibile inviare al server l'allarme di sorveglianza", exc_info=True)
 
 
 def handle_person_step(*, person_monitor, vision_loop, pilot_commands) -> None:
@@ -154,7 +154,7 @@ def handle_autonomy_step(
     try:
         controller.send_rc_control(rc_lr, rc_fb, rc_ud, rc_yaw)
     except Exception:
-        LOGGER.warning("Errore durante l'invio dei comandi RC dell'autopilota.", exc_info=True)
+        LOGGER.warning("Non è stato possibile inviare al drone i comandi del volo autonomo", exc_info=True)
 
     if autopilot_command.get("fault", False):
         reason = str(autopilot_command.get("reason", "fault"))
@@ -184,7 +184,7 @@ def handle_autonomy_step(
                     controller.land()
                 except Exception:
                     LOGGER.warning(
-                        "Errore durante l'atterraggio automatico finale.",
+                        "L'atterraggio di fine missione non è riuscito",
                         exc_info=True,
                     )
                 print_event("Chiusura: salvataggio dei dati")

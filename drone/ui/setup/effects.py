@@ -6,7 +6,8 @@ import numpy as np
 import pygame
 from PIL import Image, ImageDraw
 
-from drone.ui.shapes import glow_box
+from drone.ui import fonts
+from drone.ui.shapes import glow_box, paint_supersampled
 
 
 _SW_MAXIMIZE = 3
@@ -96,15 +97,14 @@ class CrossfadeBlitter:
         screen.blit(surface, (0, 0))
 
 
-def flash_button_press(screen, base_surface, rect,
-                        duration_sec: float = 0.09) -> None:
-    if base_surface is None:
+_BUTTON_PRESS_SEC = 0.15
+
+
+def flash_button_press(screen, pressed_surface,
+                       duration_sec: float = _BUTTON_PRESS_SEC) -> None:
+    if pressed_surface is None:
         return
-    pressed = base_surface.copy()
-    veil = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-    veil.fill((0, 0, 0, 80))
-    pressed.blit(veil, rect.topleft)
-    screen.blit(pressed, (0, 0))
+    screen.blit(pressed_surface, (0, 0))
     pygame.display.flip()
     pygame.time.wait(int(duration_sec * 1000))
 
@@ -120,10 +120,23 @@ CYAN_FILL = (3, 201, 255)
 CYAN_INK = (4, 36, 60)
 WHITE = (248, 251, 252)
 LINE_DIM = (4, 68, 116)
-YELLOW = (250, 222, 10)
 FOOTER_RULE = (196, 206, 216)
 
+CARD_FILL = (3, 31, 55)
+CARD_FILL_ON = (4, 36, 62)
+CARD_EDGE = (4, 108, 172)
+CARD_EDGE_ON = (8, 214, 246)
+CHIP_FILL = (3, 39, 69)
+CHIP_FILL_ON = (3, 45, 75)
+CHIP_EDGE = (8, 132, 196)
+CHIP_EDGE_ON = (4, 236, 252)
+ICON_CYAN = (80, 208, 252)
+PAD_KEY_FILL = (6, 22, 44)
+PAD_BUTTON_FILL = (4, 16, 40)
+
 _HOVER_BUTTON_FILL = (3, 20, 40)
+_ALERT_FILL = (4, 30, 54)
+_ALERT_EDGE = (4, 112, 176)
 
 _BACKGROUND_CACHE: dict = {}
 
@@ -167,6 +180,153 @@ def draw_hover_button(img, box, label, font, *, unit: float, hover: bool = False
         ((x0 + x1) / 2, (y0 + y1) / 2), label, font=font,
         fill=CYAN_INK if hover else WHITE, anchor="mm",
     )
+
+
+def _units(value: float, unit: float) -> int:
+    return int(round(value * unit))
+
+
+def draw_pad_button(draw, kind, cx, cy, r, unit) -> None:
+    draw.ellipse(
+        (cx - r, cy - r, cx + r, cy + r),
+        fill=PAD_BUTTON_FILL, outline=CYAN_BRIGHT, width=max(1, round(2.4 * unit)),
+    )
+    w = max(1, round(r * 0.13))
+    k = r * 0.44
+    if kind == "cross":
+        q = k * 0.9
+        draw.line((cx - q, cy - q, cx + q, cy + q), fill=CYAN_TEXT, width=w)
+        draw.line((cx - q, cy + q, cx + q, cy - q), fill=CYAN_TEXT, width=w)
+    elif kind == "circle":
+        q = k * 0.92
+        draw.ellipse((cx - q, cy - q, cx + q, cy + q), outline=CYAN_TEXT, width=w)
+    elif kind == "square":
+        q = k * 0.8
+        draw.rectangle((cx - q, cy - q, cx + q, cy + q), outline=CYAN_TEXT, width=w)
+    elif kind == "triangle":
+        q = k * 1.06
+        dy = q * 0.12
+        draw.polygon(
+            [
+                (cx, cy - q + dy),
+                (cx + q * 0.87, cy + q * 0.5 + dy),
+                (cx - q * 0.87, cy + q * 0.5 + dy),
+            ],
+            outline=CYAN_TEXT, width=w,
+        )
+
+
+def draw_pad_arrow(draw, verso, cx, cy, r, unit) -> None:
+    w = max(1, round(r * 0.13))
+    lungo = r * 0.86
+    testa = r * 0.34
+    larga = r * 0.3
+    orizzontale = verso == "orizzontale"
+    if orizzontale:
+        draw.line((cx - lungo + testa / 2, cy, cx + lungo - testa / 2, cy), fill=CYAN_TEXT, width=w)
+    else:
+        draw.line((cx, cy - lungo + testa / 2, cx, cy + lungo - testa / 2), fill=CYAN_TEXT, width=w)
+    for segno in (-1, 1):
+        if orizzontale:
+            punta = cx + segno * lungo
+            testa_xy = [(punta, cy), (punta - segno * testa, cy - larga),
+                        (punta - segno * testa, cy + larga)]
+        else:
+            punta = cy + segno * lungo
+            testa_xy = [(cx, punta), (cx - larga, punta - segno * testa),
+                        (cx + larga, punta - segno * testa)]
+        draw.polygon(testa_xy, fill=CYAN_TEXT)
+
+
+def draw_pad_key(draw, cx, cy, w, h, unit) -> None:
+    draw.rounded_rectangle(
+        (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), radius=h / 2,
+        fill=PAD_KEY_FILL, outline=CYAN_BRIGHT, width=max(1, round(2.4 * unit)),
+    )
+
+
+def draw_pad_dpad(draw, cx, cy, r, unit) -> None:
+    draw.rounded_rectangle(
+        (cx - r, cy - r, cx + r, cy + r), radius=7 * unit,
+        fill=PAD_KEY_FILL, outline=CYAN_BRIGHT, width=max(1, round(1.6 * unit)),
+    )
+    braccio = r * 0.34
+    lato = r * 0.2
+    for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        px, py = cx + dx * braccio, cy + dy * braccio
+        draw.rounded_rectangle(
+            (px - lato, py - lato, px + lato, py + lato), radius=2 * unit, fill=WHITE,
+        )
+    centro = r * 0.13
+    draw.rectangle((cx - centro, cy - centro, cx + centro, cy + centro), fill=WHITE)
+
+
+def draw_joystick_hints(img, hints, *, font, start_x, cy, unit) -> None:
+    r = _units(24, unit)
+    x = start_x
+    draw = ImageDraw.Draw(img)
+    for indice, (kind, label) in enumerate(hints):
+        if indice:
+            x += _units(22, unit)
+            draw.text((x, cy), "•", font=font, fill=WHITE, anchor="mm")
+            x += _units(22, unit)
+        cx = x + r
+        reach = r + _units(3, unit)
+        paint_supersampled(
+            img, (cx - reach, cy - reach, cx + reach, cy + reach), (cx, cy),
+            lambda d, ax, ay, s, kind=kind: (
+                draw_pad_dpad(d, ax, ay, r * s, unit * s) if kind == "dpad"
+                else draw_pad_button(d, kind, ax, ay, r * s, unit * s)
+            ),
+        )
+        x += 2 * r + _units(18, unit)
+        draw.text((x, cy), label, font=font, fill=WHITE, anchor="lm")
+        x += int(font.getlength(label))
+
+
+def draw_alert(draw, cx, cy, text, font, *, unit) -> None:
+    h = _units(48, unit)
+    padx = _units(24, unit)
+    dot_d = _units(16, unit)
+    gap = _units(14, unit)
+    w = padx + dot_d + gap + int(font.getlength(text)) + padx
+    x0 = cx - w // 2
+    y0 = cy - h // 2
+    draw.rounded_rectangle(
+        [x0, y0, x0 + w, y0 + h], radius=_units(12, unit),
+        fill=_ALERT_FILL, outline=_ALERT_EDGE, width=_units(1, unit),
+    )
+    dx = x0 + padx
+    draw.ellipse([dx, cy - dot_d // 2, dx + dot_d, cy + dot_d // 2], fill=ICON_CYAN)
+    draw.text((dx + dot_d + gap, cy), text, font=font, fill=WHITE, anchor="lm")
+
+
+def footer_rule_y(button_top: int, *, supersample: int, unit: float) -> int:
+    return int(round(button_top * supersample)) - _units(28, unit)
+
+
+def draw_setup_footer(img, buttons, hints, *, supersample: int, unit: float) -> None:
+    def px(value):
+        return int(round(value * supersample))
+
+    rects = [rect for rect, _label, _hover in buttons]
+    sinistro = min(rects, key=lambda rect: rect.x)
+    linea = footer_rule_y(sinistro.y, supersample=supersample, unit=unit)
+    ImageDraw.Draw(img).line(
+        [(px(sinistro.x), linea), (px(max(rect.right for rect in rects)), linea)],
+        fill=FOOTER_RULE, width=max(1, round(1.3 * unit)),
+    )
+    if hints:
+        draw_joystick_hints(
+            img, hints, font=fonts.sans(_units(24, unit)),
+            start_x=px(sinistro.right) + _units(50, unit), cy=px(sinistro.centery), unit=unit,
+        )
+    font = fonts.sans_bold(_units(25, unit))
+    for rect, label, hover in buttons:
+        draw_hover_button(
+            img, (px(rect.x), px(rect.y), px(rect.right), px(rect.bottom)),
+            label, font, unit=unit, hover=hover,
+        )
 
 
 def fit_text(text, font, max_w) -> str:

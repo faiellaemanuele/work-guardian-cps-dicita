@@ -2,17 +2,25 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 
 import cv2
 import pygame
 
-from drone.config import APP_CONFIG
+from drone.config import APP_CONFIG, BASE_DIR
 from drone.hardware.joystick import close_joystick
 from drone.flight.preflight import Subsystems
 from drone.perception.vision_loop import stop_mqtt_client
-from drone.ui.console import SEP_THIN, print_event, set_alert_sink
+from drone.ui.console import log_phase, mark_runtime_stopped, print_step, set_alert_sink
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _project_relative(path) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(BASE_DIR))
+    except (ValueError, OSError):
+        return str(path)
 
 
 def _landed_by_pilot(subsystems: Subsystems) -> bool:
@@ -33,7 +41,7 @@ def release_mission(subsystems: Subsystems) -> None:
         try:
             vision_loop.stop()
         except Exception:
-            LOGGER.warning("Errore durante l'arresto del thread di riconoscimento.", exc_info=True)
+            LOGGER.warning("Il riconoscimento degli oggetti non è stato fermato correttamente", exc_info=True)
 
     try:
         cv2.destroyAllWindows()
@@ -48,6 +56,8 @@ def release_mission(subsystems: Subsystems) -> None:
     subsystems.person_monitor = None
     subsystems.dpi_monitor = None
     subsystems.scenario_name = None
+    subsystems.scenario_change = True
+    mark_runtime_stopped()
 
 
 def run_postflight(subsystems: Subsystems, original_stdout) -> None:
@@ -69,13 +79,13 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
             if getattr(controller, "is_flying", False):
                 controller.land()
         except Exception:
-            LOGGER.warning("Atterraggio di sicurezza non riuscito durante la chiusura.", exc_info=True)
+            LOGGER.warning("L'atterraggio di sicurezza alla chiusura non è riuscito", exc_info=True)
 
     if vision_loop is not None:
         try:
             vision_loop.stop()
         except Exception:
-            LOGGER.warning("Errore durante l'arresto del thread di riconoscimento.", exc_info=True)
+            LOGGER.warning("Il riconoscimento degli oggetti non è stato fermato correttamente", exc_info=True)
 
     stop_mqtt_client()
 
@@ -85,9 +95,14 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
         except Exception:
             pass
 
+    if flight_data_logger is not None:
+        log_phase("Chiusura della sessione")
+
     if flight_data_logger is not None and _landed_by_pilot(subsystems):
-        print_event(
-            "Atterraggio comandato dal pilota: la sessione si chiude senza salvare i dati"
+        print_step(
+            "--",
+            "Il pilota ha fatto atterrare il drone con il controller: i dati del volo "
+            "non vengono salvati",
         )
     elif flight_data_logger is not None:
         try:
@@ -99,29 +114,33 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
                 )
 
                 if session_dir is not None:
-                    print(f"\n{SEP_THIN}")
-                    print("La sessione di volo è stata salvata in:")
-                    print(session_dir)
-                    print(SEP_THIN)
+                    print_step(
+                        "OK",
+                        "La sessione di volo è stata salvata nella cartella "
+                        f"{_project_relative(session_dir)}",
+                    )
                 else:
-                    print_event(
-                        "Non è stato possibile creare la cartella della sessione",
-                        prefix="ERRORE",
+                    print_step(
+                        "!!",
+                        "Non è stato possibile creare la cartella della sessione: "
+                        "i dati del volo non sono stati salvati",
                     )
 
-                print(flight_data_logger.get_summary())
+                for riga in flight_data_logger.get_summary().splitlines():
+                    print_step("--", riga)
             else:
-                print_event(
-                    "Nessuna posizione valida registrata: non è stato generato alcun file"
+                print_step(
+                    "--",
+                    "Non è stata registrata alcuna posizione: nessun file è stato salvato",
                 )
         except Exception:
-            LOGGER.exception("Errore durante il salvataggio finale dei dati di volo.")
+            LOGGER.exception("Non è stato possibile salvare i dati del volo")
 
     if dashboard is not None:
         try:
             dashboard.close()
         except Exception:
-            LOGGER.warning("Errore durante la chiusura del cruscotto.", exc_info=True)
+            LOGGER.warning("Il cruscotto non è stato chiuso correttamente", exc_info=True)
     cv2.destroyAllWindows()
     close_joystick()
     pygame.quit()

@@ -6,7 +6,10 @@ import sys
 
 from drone.config import APP_CONFIG
 from drone.ui.console import (
+    ConsoleHandler,
     ConsoleLogFormatter,
+    RepeatedErrorFilter,
+    install_console_handler,
     print_step,
     set_color_enabled,
 )
@@ -18,8 +21,8 @@ def _resolve_log_level(default: int = logging.WARNING) -> int:
     if level_name not in valid_levels:
         print_step(
             "!!",
-            f"log_level '{APP_CONFIG.log_level}' non riconosciuto "
-            f"(valori ammessi: {', '.join(sorted(valid_levels))}). Uso WARNING.",
+            f"Il livello di log '{APP_CONFIG.log_level}' non è riconosciuto: verrà usato "
+            f"WARNING (valori ammessi: {', '.join(sorted(valid_levels))})",
         )
         return default
     return getattr(logging, level_name, default)
@@ -60,9 +63,11 @@ def configure_logging():
 
     log_level = _resolve_log_level()
 
-    console_handler = logging.StreamHandler()
+    console_handler = ConsoleHandler()
     console_handler.setFormatter(ConsoleLogFormatter())
+    console_handler.addFilter(RepeatedErrorFilter(APP_CONFIG.console_error_repeat_after_sec))
     logging.basicConfig(level=log_level, handlers=[console_handler], force=True)
+    install_console_handler(console_handler)
 
     logging.getLogger("djitellopy").setLevel(logging.ERROR)
     logging.getLogger("djitellopy.tello").setLevel(logging.ERROR)

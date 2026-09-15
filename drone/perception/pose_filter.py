@@ -169,8 +169,7 @@ class PositionKalmanFilter:
             K = np.linalg.solve(S, self.yaw_H @ self.yaw_P).T
         except np.linalg.LinAlgError:
             LOGGER.warning(
-                "Filtro di Kalman: matrice non invertibile nell'aggiornamento dello yaw, "
-                "si applica la sola predizione."
+                "Il filtro di Kalman non ha potuto applicare la misura dell'orientamento: viene usata la sola previsione"
             )
             return float(self.yaw_x[0, 0])
 
@@ -248,8 +247,7 @@ class PositionKalmanFilter:
             K = np.linalg.solve(S, self.H @ self.P).T
         except np.linalg.LinAlgError:
             LOGGER.warning(
-                "Filtro di Kalman: matrice non invertibile nell'aggiornamento della posizione, "
-                "si applica la sola predizione."
+                "Il filtro di Kalman non ha potuto applicare la misura della posizione: viene usata la sola previsione"
             )
             return self.x[0:3, :].copy()
 
@@ -308,8 +306,7 @@ class PositionKalmanFilter:
             )
         except Exception:
             LOGGER.warning(
-                "Filtro di Kalman: aggiornamento della posizione non riuscito, "
-                "filter_pose_estimate restituisce None."
+                "Il filtro di Kalman non ha aggiornato la posizione per l'immagine corrente"
             )
             return None
 

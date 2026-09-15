@@ -42,7 +42,7 @@ def apply_battery_guard(
         try:
             controller.land()
         except Exception:
-            LOGGER.warning("Errore durante l'atterraggio per batteria critica.", exc_info=True)
+            LOGGER.warning("L'atterraggio per batteria critica non è riuscito", exc_info=True)
         return False, rth_active, last_low_battery_warn_at
 
     def _warn_low_battery(last_at: float) -> float:
@@ -84,7 +84,7 @@ def apply_battery_guard(
             try:
                 controller.land()
             except Exception:
-                LOGGER.warning("Errore durante l'atterraggio per batteria bassa.", exc_info=True)
+                LOGGER.warning("L'atterraggio per batteria bassa non è riuscito", exc_info=True)
             return False, rth_active, last_low_battery_warn_at
         if not rth_active:
             last_low_battery_warn_at = _warn_low_battery(last_low_battery_warn_at)

@@ -612,6 +612,49 @@ def test_la_telemetria_non_consegnata_non_passa_per_riuscita():
     assert client.pubblicazioni, "il tentativo deve comunque essere stato fatto"
 
 
+def test_la_batteria_non_leggibile_resta_fuori_dal_log_degli_errori():
+    import logging
+
+    class _SenzaBatteria:
+        def get_status(self):
+            return {"connected": True, "flying": True, "battery": None}
+
+    logger = logging.getLogger("drone.perception.vision_loop")
+    registrati = []
+    raccoglitore = logging.Handler()
+    raccoglitore.emit = registrati.append
+    logger.addHandler(raccoglitore)
+    livello_precedente = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
+        vl = _vision_loop(status_refresh_sec=0.0)
+        vl.cached_status["battery"] = 40
+        vl._refresh_status(_SenzaBatteria())
+    finally:
+        logger.removeHandler(raccoglitore)
+        logger.setLevel(livello_precedente)
+    assert registrati, "il messaggio deve comunque essere registrato"
+    assert all(r.levelno < logging.WARNING for r in registrati)
+
+
+def test_la_telemetria_non_consegnata_finisce_nel_log_degli_errori():
+    import logging
+
+    logger = logging.getLogger("drone.perception.vision_loop")
+    registrati = []
+    raccoglitore = logging.Handler()
+    raccoglitore.emit = registrati.append
+    logger.addHandler(raccoglitore)
+    try:
+        vl = _vision_loop()
+        with _mqtt_finto(_ClientMqtt(rc=4)):
+            vl.publish_state(now=0.0)
+    finally:
+        logger.removeHandler(raccoglitore)
+    assert len(registrati) == 1
+    assert registrati[0].levelno >= logging.WARNING
+
+
 def test_l_allarme_va_sul_topic_degli_allarmi_con_qos_1():
     vl = _vision_loop()
     client = _ClientMqtt()

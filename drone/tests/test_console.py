@@ -96,46 +96,15 @@ def test_log_console_block_is_raw():
     assert out == "Sistema pronto.\nriga 2"
 
 
-_AIUTO = (
-    "\nComandi del controller\n" + "─" * 20
-    + "\nPulsante    Azione\n" + "─" * 20
-    + "\nCroce       decolla\n" + "─" * 20
-)
-
-
-def test_ready_banner_keeps_every_word_and_puts_the_title_in_the_rule():
+def test_ready_banner_is_only_the_titled_rule_and_the_message():
     recs = _collect_logs("drone.setup", lambda: co.log_ready_banner(
-        "Tutto pronto", "Il drone è a terra.", _AIUTO, ("Prima riga finale.", "Riga finale."),
+        "Tutto pronto", "Il drone è a terra.",
     ))
     assert len(recs) == 1
     righe = ConsoleLogFormatter().format(recs[0]).split("\n")
     assert righe[0] == ""
     assert righe[1].startswith("-") and "TUTTO PRONTO" in righe[1]
-    assert righe[2] == "Il drone è a terra."
-    testo = "\n".join(righe)
-    assert "COMANDI DEL CONTROLLER" in testo
-    assert "Pulsante    Azione" in testo
-    assert "Croce       decolla" in testo
-    assert "─" not in testo
-    assert righe[-2:] == ["Prima riga finale.", "Riga finale."]
-
-
-def test_ready_banner_without_help_skips_the_table():
-    recs = _collect_logs("drone.setup", lambda: co.log_ready_banner(
-        "Tutto pronto", "Messaggio.", "", ("Fine.",),
-    ))
-    righe = ConsoleLogFormatter().format(recs[0]).split("\n")
-    assert righe[2:] == ["Messaggio.", "", "Fine."]
-
-
-def test_the_help_block_is_colored_only_when_colors_are_on():
-    co.set_color_enabled(True)
-    try:
-        colorato = co._style_help_block(_AIUTO)
-    finally:
-        co.set_color_enabled(False)
-    assert "\033[" in colorato
-    assert "\033[" not in co._style_help_block(_AIUTO)
+    assert righe[2:] == ["Il drone è a terra."]
 
 
 def test_print_event_setup_goes_to_shell_not_panel():
@@ -340,51 +309,133 @@ def _record_livello(level, message="qualcosa"):
     )
 
 
-def _formatter_pulito():
-    ConsoleLogFormatter._errors_section_open = False
-    return ConsoleLogFormatter()
+def _record_da(name, level=logging.WARNING, message="guaio", **attributi):
+    record = logging.LogRecord(name, level, __file__, 1, message, None, None)
+    for chiave, valore in attributi.items():
+        setattr(record, chiave, valore)
+    return record
 
 
-def test_errors_section_not_opened_during_setup():
-    co._runtime_started = False
+def _formatta(record, *, in_volo=True) -> str:
+    prev = co._runtime_started
+    co._runtime_started = in_volo
     try:
-        testo = _formatter_pulito().format(_record_livello(logging.ERROR))
+        return ConsoleLogFormatter().format(record)
     finally:
-        co._runtime_started = False
-    assert "ERRORI" not in testo
+        co._runtime_started = prev
 
 
-def test_errors_section_opens_on_first_problem_in_flight():
+def test_errors_in_flight_show_only_the_time_and_the_message():
+    testo = _formatta(_record_livello(logging.ERROR, "batteria bassa"))
+    orario, messaggio = testo.split("  ", 1)
+    assert len(orario) == 8 and orario[2] == ":" and orario[5] == ":"
+    assert messaggio == "batteria bassa"
+
+
+def test_setup_problems_keep_their_glyph():
+    testo = _formatta(_record_livello(logging.ERROR, "guaio"), in_volo=False)
+    assert "×  guaio" in testo
+
+
+def test_setup_steps_keep_their_glyph_in_flight():
+    testo = _formatta(_record_da("drone.setup", setup_label="!!"))
+    assert "!  guaio" in testo
+
+
+def _gestore_su_buffer():
+    flusso = io.StringIO()
+    gestore = co.ConsoleHandler(flusso)
+    gestore.setFormatter(logging.Formatter("%(message)s"))
+    return gestore, flusso
+
+
+def test_the_handler_keeps_the_startup_lines_until_told_to_stop():
+    gestore, flusso = _gestore_su_buffer()
+    gestore.handle(_record_livello(logging.INFO, "fase 1"))
+    gestore.end_startup()
+    gestore.handle(_record_livello(logging.INFO, "fase 4"))
+    assert flusso.getvalue() == "fase 1\nfase 4\n"
+    assert gestore._startup_lines == ["fase 1"]
+
+
+def test_the_redraw_clears_the_screen_and_rewrites_only_the_startup():
+    gestore, flusso = _gestore_su_buffer()
+    gestore.handle(_record_livello(logging.INFO, "fase 1"))
+    gestore.end_startup()
+    gestore.handle(_record_livello(logging.WARNING, "errore del volo precedente"))
+    co.set_color_enabled(True)
+    try:
+        gestore.redraw_startup()
+    finally:
+        co.set_color_enabled(False)
+    assert flusso.getvalue().split(co._CLEAR_SCREEN)[-1] == "fase 1\n"
+
+
+def test_without_a_real_terminal_the_redraw_clears_nothing():
+    gestore, flusso = _gestore_su_buffer()
+    gestore.handle(_record_livello(logging.INFO, "fase 1"))
+    gestore.end_startup()
+    gestore.redraw_startup()
+    assert flusso.getvalue() == "fase 1\n"
+
+
+def test_the_console_leaves_flight_mode_when_asked():
+    precedente = co._runtime_started
+    try:
+        co.mark_runtime_started()
+        co.mark_runtime_stopped()
+        assert co._runtime_started is False
+    finally:
+        co._runtime_started = precedente
+
+
+def _filtro():
+    orologio = [0.0]
+    return co.RepeatedErrorFilter(5.0, time_source=lambda: orologio[0]), orologio
+
+
+def test_the_same_error_is_not_repeated_within_the_interval():
+    filtro, orologio = _filtro()
+    assert filtro.filter(_record_da("drone.perception.pose_filter")) is True
+    orologio[0] = 4.9
+    assert filtro.filter(_record_da("drone.perception.pose_filter")) is False
+    orologio[0] = 5.0
+    assert filtro.filter(_record_da("drone.perception.pose_filter")) is True
+
+
+def test_different_errors_are_limited_independently():
+    filtro, _orologio = _filtro()
+    assert filtro.filter(_record_da("drone.perception.pose_filter", message="primo")) is True
+    assert filtro.filter(_record_da("drone.perception.pose_filter", message="secondo")) is True
+    assert filtro.filter(_record_da("drone.perception.pose_estimator", message="primo")) is True
+
+
+def test_the_limit_ignores_the_values_inside_the_message():
+    filtro, _orologio = _filtro()
+    modello = "Orientamento non ricavabile da un marker AprilTag (asse %s quasi verticale)"
+    primo = logging.LogRecord("drone.perception.pose_estimator", logging.WARNING, __file__, 1, modello, ("x",), None)
+    secondo = logging.LogRecord("drone.perception.pose_estimator", logging.WARNING, __file__, 1, modello, ("z",), None)
+    assert filtro.filter(primo) is True
+    assert filtro.filter(secondo) is False
+
+
+def test_the_limit_leaves_setup_steps_and_informative_lines_alone():
+    filtro, _orologio = _filtro()
+    for _ in range(3):
+        assert filtro.filter(_record_da("drone.setup", setup_label="!!")) is True
+        assert filtro.filter(_record_da("drone.phase", level=logging.INFO)) is True
+
+
+def test_flight_events_stay_out_of_the_error_log():
+    prev = co._runtime_started
     co._runtime_started = True
     try:
-        testo = _formatter_pulito().format(_record_livello(logging.WARNING, "batteria bassa"))
+        errori = _collect_logs("drone.event", lambda: print_event(
+            "Batteria al 18%: atterro per sicurezza", prefix="ERRORE",
+        ))
     finally:
-        co._runtime_started = False
-    assert "ERRORI" in testo
-    assert "batteria bassa" in testo
-    assert testo.index("ERRORI") < testo.index("batteria bassa")
-
-
-def test_errors_section_title_printed_only_once():
-    co._runtime_started = True
-    try:
-        f = _formatter_pulito()
-        primo = f.format(_record_livello(logging.ERROR, "primo guaio"))
-        secondo = f.format(_record_livello(logging.ERROR, "secondo guaio"))
-    finally:
-        co._runtime_started = False
-    assert "ERRORI" in primo
-    assert "ERRORI" not in secondo
-
-
-def test_errors_section_ignores_informative_lines():
-    co._runtime_started = True
-    try:
-        f = _formatter_pulito()
-        assert "ERRORI" not in f.format(_record_livello(logging.INFO, "tutto bene"))
-        assert "ERRORI" in f.format(_record_livello(logging.WARNING, "guaio"))
-    finally:
-        co._runtime_started = False
+        co._runtime_started = prev
+    assert errori == []
 
 
 def _run_all() -> int:

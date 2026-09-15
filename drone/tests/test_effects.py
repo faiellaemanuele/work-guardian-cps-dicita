@@ -5,7 +5,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from PIL import Image
+import pygame
+from PIL import Image, ImageDraw
 
 from drone.ui import fonts
 from drone.ui.setup import effects
@@ -98,6 +99,74 @@ def test_il_bottone_resta_scuro_e_si_accende_d_azzurro_sotto_il_cursore():
     effects.draw_hover_button(acceso, box, "Conferma", fonts.sans_bold(20), unit=1.0, hover=True)
     assert sum(spento.getpixel((80, 45))) < 100
     assert acceso.getpixel((80, 45)) == effects.CYAN_FILL
+
+
+def test_i_tasti_del_joystick_hanno_il_bordo_ciano_e_il_fondo_scuro():
+    for forma in ("cross", "circle", "square", "triangle", None):
+        img = Image.new("RGB", (100, 100), (0, 0, 0))
+        effects.draw_pad_button(ImageDraw.Draw(img), forma, 50, 50, 40, 1.0)
+        assert img.getpixel((50, 11)) == effects.CYAN_BRIGHT, forma
+        assert img.getpixel((50, 25)) == effects.PAD_BUTTON_FILL, forma
+
+
+def test_il_simbolo_del_tasto_si_disegna_solo_se_ha_una_forma():
+    vuoto = Image.new("RGB", (100, 100), (0, 0, 0))
+    effects.draw_pad_button(ImageDraw.Draw(vuoto), None, 50, 50, 40, 1.0)
+    croce = Image.new("RGB", (100, 100), (0, 0, 0))
+    effects.draw_pad_button(ImageDraw.Draw(croce), "cross", 50, 50, 40, 1.0)
+    assert vuoto.getpixel((50, 50)) == effects.PAD_BUTTON_FILL
+    assert croce.getpixel((50, 50)) == effects.CYAN_TEXT
+
+
+def test_la_freccia_dello_stick_segue_il_verso_del_suo_asse():
+    for verso, dentro, fuori in (
+        ("orizzontale", (80, 50), (50, 80)),
+        ("verticale", (50, 80), (80, 50)),
+    ):
+        img = Image.new("RGB", (100, 100), (0, 0, 0))
+        effects.draw_pad_arrow(ImageDraw.Draw(img), verso, 50, 50, 40, 1.0)
+        assert img.getpixel((50, 50)) == effects.CYAN_TEXT, verso
+        assert img.getpixel(dentro) == effects.CYAN_TEXT, verso
+        assert img.getpixel(fuori) == (0, 0, 0), verso
+
+
+def test_la_pastiglia_del_tasto_ha_i_lati_tondi():
+    img = Image.new("RGB", (200, 100), (0, 0, 0))
+    effects.draw_pad_key(ImageDraw.Draw(img), 100, 50, 120, 40, 1.0)
+    assert img.getpixel((100, 50)) == effects.PAD_KEY_FILL
+    assert img.getpixel((100, 31)) == effects.CYAN_BRIGHT
+    assert img.getpixel((41, 31)) == (0, 0, 0)
+
+
+def test_il_piede_traccia_la_riga_sopra_i_bottoni_e_i_suggerimenti_a_sinistra():
+    img = Image.new("RGB", (800, 200), (0, 0, 0))
+    sinistro = pygame.Rect(20, 120, 150, 50)
+    destro = pygame.Rect(630, 120, 150, 50)
+    effects.draw_setup_footer(
+        img, [(sinistro, "Esci", False), (destro, "Inizia", False)], [("cross", "inizia")],
+        supersample=1, unit=1.0,
+    )
+    riga = effects.footer_rule_y(sinistro.y, supersample=1, unit=1.0)
+    assert riga == sinistro.y - 28
+    assert img.getpixel((400, riga)) == effects.FOOTER_RULE
+    assert img.getpixel((sinistro.right + 50 + 24, sinistro.centery)) != (0, 0, 0)
+    assert img.getpixel((500, sinistro.centery)) == (0, 0, 0)
+
+
+def test_il_bottone_premuto_resta_acceso_a_schermo_prima_di_cambiare():
+    screen = _FakeScreen()
+    acceso = _FakeSurface()
+    attese = []
+    flip, wait = pygame.display.flip, pygame.time.wait
+    pygame.display.flip = lambda: None
+    pygame.time.wait = attese.append
+    try:
+        effects.flash_button_press(screen, acceso)
+        effects.flash_button_press(screen, None)
+    finally:
+        pygame.display.flip, pygame.time.wait = flip, wait
+    assert screen.blitted == [acceso]
+    assert attese == [int(effects._BUTTON_PRESS_SEC * 1000)]
 
 
 def test_la_dissolvenza_disegna_subito_la_prima_schermata():

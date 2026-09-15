@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from drone.config import APP_CONFIG
 from drone.config import logging_setup
 from drone.config.logging_setup import ensure_utf8_console
+from drone.ui import console
+from drone.ui.console import ConsoleHandler, RepeatedErrorFilter
 
 RADICE = Path(__file__).resolve().parent.parent.parent
 
@@ -143,6 +145,25 @@ def test_le_librerie_esterne_restano_zitte():
 
     assert livelli["djitellopy"] == logging.ERROR
     assert livelli["ultralytics"] == logging.ERROR
+
+
+def test_la_console_conserva_le_righe_dell_avvio_per_poterle_ridisegnare():
+    _con_livello("warning")
+    gestori = [g for g in logging.getLogger().handlers if isinstance(g, ConsoleHandler)]
+    assert len(gestori) == 1
+    assert console._console_handler is gestori[0]
+
+
+def test_la_console_non_ripete_lo_stesso_errore():
+    _con_livello("warning")
+    filtri = [
+        filtro
+        for gestore in logging.getLogger().handlers
+        for filtro in gestore.filters
+        if isinstance(filtro, RepeatedErrorFilter)
+    ]
+    assert len(filtri) == 1
+    assert filtri[0]._repeat_after_sec == APP_CONFIG.console_error_repeat_after_sec
 
 
 def _run_all() -> int:

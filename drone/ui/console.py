@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import time
 from typing import Callable, Optional
@@ -21,10 +20,8 @@ def _rgb(r: int, g: int, b: int) -> str:
 
 _TITLE    = _BOLD + _rgb(36, 196, 230)
 _RULE     = _rgb(28, 150, 196)
-_RULE_DIM = _rgb(22, 100, 136)
 _TIME     = _rgb(200, 212, 222)
 _TEXT     = _rgb(232, 238, 244)
-_TABLE    = _BOLD + _rgb(140, 210, 234)
 _READY    = _BOLD + _rgb(88, 226, 120)
 _GREEN    = _rgb(88, 226, 120)
 _GREY     = _rgb(140, 150, 162)
@@ -77,34 +74,23 @@ def _centered_rule(label: str) -> str:
 
 
 class ConsoleLogFormatter(logging.Formatter):
-    _errors_section_open = False
-
     def format(self, record: logging.LogRecord) -> str:
         if getattr(record, "phase", False):
             return self._format_phase(record.getMessage())
         if getattr(record, "title", False):
             return self._format_title(record.getMessage())
-        prefix = self._open_errors_section(record)
         if getattr(record, "raw", False):
             return record.getMessage()
-        ts = time.strftime("%H:%M:%S", time.localtime(record.created))
+        ts = _c(time.strftime("%H:%M:%S", time.localtime(record.created)), _TIME)
+        message = _c(record.getMessage(), _TEXT)
         setup_label = getattr(record, "setup_label", None)
+        if setup_label is None and _runtime_started and record.levelno >= logging.WARNING:
+            return f"{ts}  {message}"
         if setup_label is not None:
             glyph = _STEP_GLYPH.get(setup_label, "·")
         else:
             glyph = _LEVEL_GLYPH.get(record.levelno, "·")
-        return (
-            f"{prefix}{_c(ts, _TIME)}  {_c(glyph, _GLYPH_COLOR.get(glyph, ''))}  "
-            f"{_c(record.getMessage(), _TEXT)}"
-        )
-
-    def _open_errors_section(self, record: logging.LogRecord) -> str:
-        if type(self)._errors_section_open or not _runtime_started:
-            return ""
-        if record.levelno < logging.WARNING:
-            return ""
-        type(self)._errors_section_open = True
-        return self._format_phase("Errori") + "\n"
+        return f"{ts}  {_c(glyph, _GLYPH_COLOR.get(glyph, ''))}  {message}"
 
     @staticmethod
     def _format_phase(title: str) -> str:
@@ -114,6 +100,84 @@ class ConsoleLogFormatter(logging.Formatter):
     def _format_title(title: str) -> str:
         left = " " * max(0, (_SEP_WIDTH - len(title)) // 2)
         return f"{left}{_c(title, _TITLE)}\n{_c(SEP_THIN, _RULE)}"
+
+
+class RepeatedErrorFilter(logging.Filter):
+    def __init__(
+        self,
+        repeat_after_sec: float,
+        time_source: Callable[[], float] = time.monotonic,
+    ):
+        super().__init__()
+        self._repeat_after_sec = float(repeat_after_sec)
+        self._time_source = time_source
+        self._last_shown_at: dict[tuple[str, str], float] = {}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno < logging.WARNING or getattr(record, "setup_label", None) is not None:
+            return True
+        key = (record.name, str(record.msg))
+        now = self._time_source()
+        last = self._last_shown_at.get(key)
+        if last is not None and now - last < self._repeat_after_sec:
+            return False
+        self._last_shown_at[key] = now
+        return True
+
+
+_CLEAR_SCREEN = "\033[2J\033[3J\033[H"
+
+
+class ConsoleHandler(logging.StreamHandler):
+    def __init__(self, stream=None):
+        super().__init__(stream)
+        self._startup_lines: list[str] = []
+        self._keeping_startup = True
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            text = self.format(record)
+            if self._keeping_startup:
+                self._startup_lines.append(text)
+            self.stream.write(text + self.terminator)
+            self.flush()
+        except RecursionError:
+            raise
+        except Exception:
+            self.handleError(record)
+
+    def end_startup(self) -> None:
+        self._keeping_startup = False
+
+    def redraw_startup(self) -> None:
+        if not _COLOR:
+            return
+        self.acquire()
+        try:
+            self.stream.write(_CLEAR_SCREEN)
+            for text in self._startup_lines:
+                self.stream.write(text + self.terminator)
+            self.flush()
+        finally:
+            self.release()
+
+
+_console_handler: Optional[ConsoleHandler] = None
+
+
+def install_console_handler(handler: ConsoleHandler) -> None:
+    global _console_handler
+    _console_handler = handler
+
+
+def end_startup_transcript() -> None:
+    if _console_handler is not None:
+        _console_handler.end_startup()
+
+
+def redraw_startup_transcript() -> None:
+    if _console_handler is not None:
+        _console_handler.redraw_startup()
 
 
 _CONSOLE_LINE_GLYPH = {"INFO": "·", "WARN": "!", "ERR": "×", "RETE": "•", "ALLERTA": "×"}
@@ -136,43 +200,8 @@ def log_console_block(text: str) -> None:
     _SETUP_LOGGER.info(text, extra={"raw": True})
 
 
-_TABLE_ROW = re.compile(r"^(\S.*?)(\s{2,})(\S.*)$")
-
-
-def _is_rule_line(line: str) -> bool:
-    return bool(line) and set(line) <= {"─", "-"}
-
-
-def _style_help_block(text: str) -> str:
-    righe = text.split("\n")
-    stilizzate = []
-    for indice, riga in enumerate(righe):
-        prima = righe[indice - 1] if indice > 0 else ""
-        dopo = righe[indice + 1] if indice + 1 < len(righe) else ""
-        if not riga.strip():
-            stilizzate.append(riga)
-        elif _is_rule_line(riga):
-            stilizzate.append(_c("-" * len(riga), _RULE_DIM))
-        elif _is_rule_line(prima) and _is_rule_line(dopo):
-            stilizzate.append(_c(riga, _TABLE))
-        elif _is_rule_line(dopo) and not prima.strip():
-            stilizzate.append(_c(riga.upper(), _TITLE))
-        else:
-            celle = _TABLE_ROW.match(riga)
-            if celle is None:
-                stilizzate.append(_c(riga, _TEXT))
-            else:
-                chiave, spazi, valore = celle.groups()
-                stilizzate.append(f"{_c(chiave, _TEXT)}{spazi}{_c(valore, _TIME)}")
-    return "\n".join(stilizzate)
-
-
-def log_ready_banner(title: str, message: str, help_text: str, closing_lines) -> None:
+def log_ready_banner(title: str, message: str) -> None:
     parti = ["", _centered_rule(title.upper()), _c(message, _TEXT)]
-    if help_text:
-        parti.append(_style_help_block(help_text))
-    parti.append("")
-    parti.extend(_c(riga, _TEXT) for riga in closing_lines)
     log_console_block("\n".join(parti))
 
 
@@ -222,6 +251,11 @@ _runtime_started = False
 def mark_runtime_started() -> None:
     global _runtime_started
     _runtime_started = True
+
+
+def mark_runtime_stopped() -> None:
+    global _runtime_started
+    _runtime_started = False
 
 
 _alert_sink: Optional[Callable[[str], None]] = None

@@ -13,7 +13,8 @@ L'indirizzo del broker sta in `drone/config/app_config.py`, nel campo
 `192.168.137.1`: se l'hotspot assegna l'IP identificato sopra non c'e' niente da
 cambiare, altrimenti si sostituisce lì (la porta e' `mqtt_broker_port`, 1883).
 Con un indirizzo sbagliato il drone vola normalmente e pubblica nel vuoto: la
-sola traccia e' un avviso "MQTT | Canale non disponibile" nel log.
+sola traccia e' l'avviso "Il server ... non e' raggiungibile: la telemetria non
+e' stata consegnata" nel registro degli errori della console.
 
 ## 3. Sequenza di Avvio
 1. **PC Server**: Avviare Mosquitto (`mosquitto -v`).

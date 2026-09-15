@@ -36,7 +36,7 @@ def create_detectors(selected_names: Optional[list[str]] = None) -> list[dict]:
         import torch
     except ImportError as exc:
         raise ImportError(
-            "Per usare il detector devi installare torch e le dipendenze richieste da ultralytics."
+            "per usare il riconoscimento visivo servono torch e le dipendenze di ultralytics"
         ) from exc
 
     detector_device = 0 if torch.cuda.is_available() else "cpu"
@@ -62,13 +62,13 @@ def create_detectors(selected_names: Optional[list[str]] = None) -> list[dict]:
 
     if not detectors and load_errors:
         raise RuntimeError(
-            "Nessun modello YOLO inizializzato correttamente. Errori: "
-            + " | ".join(load_errors)
+            "nessun modello YOLO è stato inizializzato correttamente; errori: "
+            + "; ".join(load_errors)
         )
 
     if load_errors:
         print_event(
-            "Alcuni modelli non sono stati caricati: " + " | ".join(load_errors),
+            "Alcuni modelli di riconoscimento non sono stati caricati: " + "; ".join(load_errors),
             prefix="AVVISO",
         )
 
@@ -131,8 +131,9 @@ def create_apriltag_autopilot(
         return AprilTagAutopilot(autopilot_cfg)
     except (ValueError, TypeError) as exc:
         print_event(
-            f"Autopilota non creato: configurazione del percorso non valida ({exc}). "
-            "Autonomia non disponibile, il volo prosegue in manuale.",
+            "Non è stato possibile creare l'autopilota perché la configurazione del "
+            f"percorso non è valida ({exc}): il volo autonomo non è disponibile e si "
+            "prosegue in manuale",
             prefix="ERRORE",
         )
         return None

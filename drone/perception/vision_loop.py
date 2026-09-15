@@ -40,7 +40,7 @@ def _on_mqtt_connect(client, *_args) -> None:
     try:
         client.publish(MQTT_TOPIC_STATUS, "online", qos=1, retain=True)
     except Exception:
-        LOGGER.warning("MQTT | Presenza 'online' non pubblicata.", exc_info=True)
+        LOGGER.warning("Non è stato possibile comunicare al server che il drone è in linea", exc_info=True)
 
 
 def _mqtt_client():
@@ -63,12 +63,16 @@ def _mqtt_client():
         client.loop_start()
         _mqtt_singleton = client
         LOGGER.info(
-            "MQTT | Connessione al broker %s:%s avviata.",
+            "Il collegamento al server %s:%s è stato avviato",
             APP_CONFIG.mqtt_broker_ip,
             APP_CONFIG.mqtt_broker_port,
         )
     except Exception:
-        LOGGER.warning("MQTT | Canale non disponibile: il volo prosegue senza.", exc_info=True)
+        LOGGER.warning(
+            "Non è stato possibile avviare il collegamento al server: il volo prosegue "
+            "senza inviare dati",
+            exc_info=True,
+        )
     return _mqtt_singleton
 
 
@@ -83,7 +87,7 @@ def stop_mqtt_client() -> None:
         client.disconnect()
         client.loop_stop()
     except Exception:
-        LOGGER.warning("MQTT | Errore durante la chiusura del canale.", exc_info=True)
+        LOGGER.warning("Il collegamento al server non è stato chiuso correttamente", exc_info=True)
 
 
 class VisionLoop:
@@ -96,6 +100,7 @@ class VisionLoop:
         pose_filter: Optional[PositionKalmanFilter] = None,
     ):
         self.detectors = list(detectors or [])
+        self._model_labels = {m.name: m.label for m in getattr(config, "yolo_models", ())}
 
         self.pose_estimator = pose_estimator
 
@@ -159,12 +164,12 @@ class VisionLoop:
         self._warning_repeat_after_sec = float(config.vision_warning_repeat_after_sec)
         self._warning_last_logged_at: dict[str, float] = {}
 
-    def _throttled_warning(self, key: str, message: str) -> None:
+    def _throttled_warning(self, key: str, message: str, level: int = logging.WARNING) -> None:
         now = time.monotonic()
         last = self._warning_last_logged_at.get(key, 0.0)
         if now - last >= self._warning_repeat_after_sec:
             self._warning_last_logged_at[key] = now
-            LOGGER.warning(message, exc_info=sys.exc_info()[0] is not None)
+            LOGGER.log(level, message, exc_info=sys.exc_info()[0] is not None)
 
     def _normalize_frame_for_opencv(self, frame):
         if self.frame_from_controller_is_rgb:
@@ -185,15 +190,17 @@ class VisionLoop:
                 if previous_battery is not None:
                     self._throttled_warning(
                         "battery_read",
-                        "Lettura batteria non disponibile: conservo l'ultimo valore noto "
-                        f"({previous_battery}%) per la guardia di sicurezza.",
+                        "Non è stato possibile leggere la carica della batteria: la guardia "
+                        f"di sicurezza usa l'ultimo valore noto ({previous_battery}%)",
+                        level=logging.INFO,
                     )
                     new_battery = previous_battery
                 else:
                     self._throttled_warning(
                         "battery_read_blind",
-                        "Lettura batteria non disponibile e nessun valore precedente: "
-                        "guardia di sicurezza batteria momentaneamente inattiva.",
+                        "La carica della batteria non è ancora stata letta: la guardia di "
+                        "sicurezza resta inattiva finché non arriva un valore",
+                        level=logging.INFO,
                     )
             self.cached_status = {
                 "connected": status.get("connected", False),
@@ -204,8 +211,9 @@ class VisionLoop:
         except Exception:
             self._throttled_warning(
                 "status_refresh",
-                "Aggiornamento stato drone fallito: conservo l'ultima batteria nota "
-                f"({previous_battery}%).",
+                "Non è stato possibile aggiornare lo stato del drone: resta valida "
+                f"l'ultima carica nota ({previous_battery}%)",
+                level=logging.INFO,
             )
             self.cached_status = {
                 "connected": False,
@@ -294,14 +302,14 @@ class VisionLoop:
             payload = json.dumps(self._build_mqtt_payload())
             info = client.publish(MQTT_TOPIC_DRONE, payload)
         except Exception:
-            LOGGER.warning("MQTT | Telemetria non pubblicata.", exc_info=True)
+            LOGGER.warning("Non è stato possibile inviare la telemetria al server", exc_info=True)
             return False
         if getattr(info, "rc", 0) != 0:
             self._throttled_warning(
                 "mqtt_publish",
-                f"MQTT | Telemetria non consegnata (rc={info.rc}): "
-                f"broker {APP_CONFIG.mqtt_broker_ip}:{APP_CONFIG.mqtt_broker_port} "
-                "non raggiungibile.",
+                f"Il server {APP_CONFIG.mqtt_broker_ip}:{APP_CONFIG.mqtt_broker_port} "
+                "non è raggiungibile: la telemetria non è stata consegnata "
+                f"(codice {info.rc})",
             )
             return False
         return True
@@ -322,7 +330,7 @@ class VisionLoop:
             )
             info = client.publish(MQTT_TOPIC_ALARMS, payload, qos=1)
         except Exception:
-            LOGGER.warning("MQTT | Allarme non pubblicato.", exc_info=True)
+            LOGGER.warning("Non è stato possibile inviare l'allarme al server", exc_info=True)
             return False
 
         rc = getattr(info, "rc", 0)
@@ -332,12 +340,15 @@ class VisionLoop:
         # A differenza della telemetria (QoS 0, che a client disconnesso viene
         # buttata), l'allarme va a QoS 1: paho lo accoda e lo consegna quando la
         # connessione torna. Quindi non e' perso, ma il canale va segnalato.
+        queued = rc == _MQTT_ERR_NO_CONN
         self._throttled_warning(
             "mqtt_alarm",
-            f"MQTT | Broker non raggiungibile (rc={rc}): "
-            "allarme in coda, verra' consegnato alla riconnessione.",
+            "Il server non è raggiungibile: l'allarme resta in coda e verrà inviato "
+            "non appena il collegamento sarà ripristinato"
+            if queued
+            else f"L'allarme non è stato inviato al server (codice {rc})",
         )
-        return rc == _MQTT_ERR_NO_CONN
+        return queued
 
     def _build_mqtt_payload(self) -> dict:
         pose = self.get_latest_pose_estimate()
@@ -390,7 +401,7 @@ class VisionLoop:
                 if kalman_pose is not None:
                     filtered_pose = kalman_pose
             except Exception:
-                LOGGER.exception("Errore durante il filtraggio Kalman: si usa la posa grezza.")
+                LOGGER.exception("Il filtro di Kalman ha restituito un errore: viene usata la posizione non filtrata")
 
         self.last_filtered_pose_estimate = filtered_pose
         self.last_pose_estimate_at = time.monotonic()
@@ -418,7 +429,8 @@ class VisionLoop:
             except Exception:
                 self._throttled_warning(
                     f"detector_inference:{item['name']}",
-                    f"Detector '{item['name']}': errore di inferenza sul frame corrente.",
+                    f"Il modello «{self._model_labels.get(item['name'], item['name'])}» "
+                    "non è riuscito ad analizzare l'immagine corrente",
                 )
                 continue
             results.append({"name": item["name"], "color": item["color"], "detections": detections})
@@ -458,7 +470,7 @@ class VisionLoop:
             except Exception:
                 self._throttled_warning(
                     "detection_worker",
-                    "Object detection multi-modello fallita nel thread dedicato.",
+                    "Il riconoscimento degli oggetti non è riuscito sull'immagine corrente",
                 )
                 results = None
 
@@ -475,8 +487,8 @@ class VisionLoop:
             thread.join(timeout=2.0)
             if thread.is_alive():
                 LOGGER.warning(
-                    "Thread di riconoscimento ancora attivo dopo l'attesa di chiusura: "
-                    "resta registrato per non avviarne un secondo."
+                    "Il riconoscimento degli oggetti non si è fermato entro 2 secondi: "
+                    "non ne verrà avviato un secondo"
                 )
                 return
         self._detection_thread = None
@@ -504,7 +516,7 @@ class VisionLoop:
         except Exception:
             self._throttled_warning(
                 "undistort",
-                "Correzione della distorsione fallita sul frame corrente.",
+                "Non è stato possibile correggere la distorsione dell'obiettivo sull'immagine corrente",
             )
         return frame, False
 
@@ -526,7 +538,7 @@ class VisionLoop:
         except Exception:
             self._throttled_warning(
                 "draw_detections",
-                "Disegno delle detection fallito sul frame corrente.",
+                "Non è stato possibile disegnare i riquadri del riconoscimento sull'immagine corrente",
             )
 
     def _estimate_pose(self, analysis_frame, display_frame, frame_is_undistorted):
@@ -542,7 +554,7 @@ class VisionLoop:
         except Exception:
             self._throttled_warning(
                 "pose_estimate",
-                "Stima posa AprilTag fallita sul frame corrente.",
+                "Non è stato possibile stimare la posizione dai marker AprilTag sull'immagine corrente",
             )
         return display_frame
 
@@ -587,7 +599,7 @@ class VisionLoop:
         except Exception:
             self._throttled_warning(
                 "display",
-                "Visualizzazione del frame fallita: frame saltato, il ciclo prosegue.",
+                "Non è stato possibile mostrare l'immagine nella finestra video: si passa alla successiva",
             )
 
     @staticmethod

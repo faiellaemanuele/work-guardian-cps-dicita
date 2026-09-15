@@ -26,17 +26,15 @@ from drone.flight.subsystem_builders import (
     create_pose_estimator,
     create_pose_filter,
 )
-from drone.hardware.joystick import (
-    format_joystick_help,
-    init_joystick,
-    is_joystick_connected,
-)
+from drone.hardware.joystick import init_joystick, is_joystick_connected
 from drone.hardware.tello_controller import RealTelloController
 from drone.perception.pose_estimator import CameraPoseEstimator
 from drone.ui.video.dashboard import Dashboard
 from drone.ui.console import (
+    end_startup_transcript,
     print_event,
     log_phase,
+    redraw_startup_transcript,
     log_ready_banner,
     log_title,
     print_step,
@@ -62,10 +60,14 @@ class Subsystems:
     dpi_monitor: Optional[DpiMonitor] = None
     dashboard: Optional[Dashboard] = None
     scenario_name: Optional[str] = None
+    scenario_change: bool = False
 
 
 def _announce_phase(title: str) -> None:
     log_phase(title)
+
+
+_NUMERI_IN_LETTERE = {2: "due", 3: "tre", 4: "quattro", 5: "cinque", 6: "sei"}
 
 
 def _elenco_italiano(voci) -> str:
@@ -101,19 +103,23 @@ def _start_dashboard(subsystems: Subsystems, original_stdout) -> Dashboard:
 
 
 def _phase_manual_control(subsystems: Subsystems):
-    _announce_phase("Fase 1 · Pilotaggio manuale")
+    _announce_phase("Fase 1 · Controller di pilotaggio")
     screen = init_joystick()
     if is_joystick_connected():
-        print_step("OK", "Il drone si pilota con il controller PS4")
+        print_step("OK", "Il controller PS4 è collegato e pronto all'uso")
     else:
-        print_step("--", "Nessun controller collegato: attendo che ne venga inserito uno")
+        print_step(
+            "--",
+            "Nessun controller PS4 rilevato: verrà riconosciuto automaticamente "
+            "non appena sarà collegato",
+        )
     subsystems.clock = pygame.time.Clock()
     return screen
 
 
 def _phase_welcome(screen) -> bool:
     if not show_welcome_screen(screen):
-        print_step("--", "Uscita dalla schermata iniziale: il programma si chiude")
+        print_step("--", "Uscita dalla schermata di presentazione: il programma si chiude")
         return False
     fade_screen(screen, screen.copy(), fade_in=False)
     return True
@@ -126,22 +132,27 @@ def _report_missing_waypoint_paths() -> None:
         json_files = []
     if json_files:
         print_event(
-            f"Tutti i {len(json_files)} file di percorso in "
-            f"{APP_CONFIG.waypoint_paths_dir} sono malformati o privi di "
-            "waypoint validi (vedi avvisi sopra): autonomia non disponibile.",
+            f"Nessuno dei {len(json_files)} percorsi presenti in "
+            f"{APP_CONFIG.waypoint_paths_dir} è valido: il volo autonomo non è "
+            "disponibile (i motivi sono indicati negli avvisi precedenti)",
             prefix="ERRORE",
         )
     else:
         print_event(
-            f"Nessun file di percorso .json in {APP_CONFIG.waypoint_paths_dir}: "
-            "autonomia non disponibile (i waypoint provengono solo dai "
-            "percorsi .json).",
+            f"La cartella {APP_CONFIG.waypoint_paths_dir} non contiene alcun percorso "
+            ".json: il volo autonomo non è disponibile",
             prefix="ERRORE",
         )
 
 
-def _phase_mission_path(screen):
+def _phase_mission_path(screen, *, ritorno=False):
     _announce_phase("Fase 4 · Scenario della missione")
+    if ritorno:
+        print_step(
+            "--",
+            "Il pilota è tornato alla scelta dello scenario con il tasto "
+            f"{APP_CONFIG.joystick.label_scenario}",
+        )
     waypoint_paths = load_waypoint_paths(APP_CONFIG.waypoint_paths_dir)
     if not waypoint_paths:
         _report_missing_waypoint_paths()
@@ -162,22 +173,20 @@ def _phase_mission_path(screen):
         screen = pygame.display.get_surface()
 
     if selected_path is None:
-        print_step("--", "Scelta annullata, chiusura")
+        print_step("--", "La scelta dello scenario è stata annullata: il programma si chiude")
         return False, None, screen
 
-    soste = ""
-    if selected_path.supervision_waypoints:
-        elenco = _elenco_italiano(
-            [str(i) for i in selected_path.supervision_waypoints]
-        )
-        quantificatore = (
-            "ai punti" if len(selected_path.supervision_waypoints) > 1 else "al punto"
-        )
-        soste = f", con sosta {quantificatore} {elenco}"
+    print_step("OK", f"Scenario scelto: {selected_path.name}")
+    soste = selected_path.supervision_waypoints
+    if not soste:
+        dettaglio = "senza soste di supervisione"
+    elif len(soste) == 1:
+        dettaglio = f"con una sosta di supervisione al waypoint {soste[0]}"
+    else:
+        dettaglio = f"con soste di supervisione ai waypoint {_elenco_italiano(soste)}"
     print_step(
-        "OK",
-        f"Rotta «{selected_path.name}»: "
-        f"{len(selected_path.waypoints)} waypoint{soste}",
+        "--",
+        f"Il percorso prevede {len(selected_path.waypoints)} waypoint, {dettaglio}",
     )
     return True, selected_path, screen
 
@@ -188,7 +197,7 @@ def _phase_connect(subsystems: Subsystems):
     try:
         subsystems.controller = create_controller()
     except Exception as exc:
-        print_step("!!", f"Non riesco a preparare il collegamento al drone: {exc}")
+        print_step("!!", f"Non è stato possibile inizializzare il collegamento al drone: {exc}")
         return None
 
     controller = subsystems.controller
@@ -198,62 +207,86 @@ def _phase_connect(subsystems: Subsystems):
     except Exception as exc:
         print_step(
             "!!",
-            f"Drone non raggiungibile ({exc}). Controlla che sia acceso e che il "
-            "computer sia collegato alla sua rete Wi-Fi.",
+            "Il drone non è raggiungibile: verifica che sia acceso e che il computer "
+            f"sia connesso alla sua rete Wi-Fi ({exc})",
         )
         return None
-    print_step("OK", "Drone Tello EDU collegato")
+    print_step("OK", "Il drone Tello EDU è collegato al computer")
 
     try:
         controller.start_video_stream()
     except Exception as exc:
-        print_step("!!", f"Flusso video della camera non avviato: {exc}")
+        print_step("!!", f"Non è stato possibile avviare il video della camera: {exc}")
         return None
-    print_step("OK", "Flusso video della camera avviato")
+    print_step("OK", "Le immagini della camera arrivano correttamente")
     return controller
 
 
 def _build_detectors(model_names) -> list:
     model_names = list(model_names)
     if not model_names:
-        print_step("--", "Questo scenario non chiede nessun modello di riconoscimento")
+        print_step("--", "Questo scenario non richiede alcun modello di riconoscimento")
         return []
+    quali = "del modello" if len(model_names) == 1 else "dei modelli"
+    print_step(
+        "--",
+        f"Caricamento {quali} di riconoscimento in corso: potrebbe richiedere qualche secondo",
+    )
     try:
         detectors = create_detectors(model_names)
     except Exception as exc:
-        print_step("!!", f"Non sono riuscito a caricare i modelli: {exc}")
+        print_step("!!", f"Non è stato possibile caricare i modelli di riconoscimento: {exc}")
         return []
     if not detectors:
-        print_step("!!", "Nessuno dei modelli dello scenario è stato caricato")
+        print_step("!!", "Nessuno dei modelli di riconoscimento dello scenario è utilizzabile")
         return []
-    caricati = ", ".join(_model_labels([d["name"] for d in detectors])).lower()
-    print_step("OK", f"Riconosce nel video: {caricati}")
+    etichette = [e.lower() for e in _model_labels([d["name"] for d in detectors])]
+    if len(etichette) == 1:
+        print_step("OK", f"È stato caricato un modello: {etichette[0]}")
+    else:
+        quanti = _NUMERI_IN_LETTERE.get(len(etichette), str(len(etichette)))
+        print_step(
+            "OK",
+            f"Sono stati caricati {quanti} modelli: {_elenco_italiano(etichette)}",
+        )
     return detectors
 
 
 def _phase_localization(subsystems: Subsystems) -> None:
-    _announce_phase("Fase 3 · Localizzazione e canale")
+    _announce_phase("Fase 3 · Localizzazione nel cantiere")
     pose_estimator = None
     try:
         pose_estimator = create_pose_estimator()
         if pose_estimator is not None:
-            print_step("OK", "Ricava la propria posizione dai marker AprilTag del cantiere")
+            print_step("OK", "Il drone può calcolare la propria posizione dai marker AprilTag")
         else:
-            print_step("--", "Non ricava la propria posizione: la localizzazione è disattivata")
+            print_step(
+                "--",
+                "La localizzazione è disattivata nella configurazione: il drone non "
+                "calcolerà la propria posizione",
+            )
     except Exception as exc:
-        print_step("!!", f"Non ricava la propria posizione dai marker AprilTag: {exc}")
+        print_step(
+            "!!",
+            f"Il drone non può calcolare la propria posizione dai marker AprilTag: {exc}",
+        )
     subsystems.pose_estimator = pose_estimator
 
 
 def _build_pose_filter(subsystems: Subsystems):
     if subsystems.pose_estimator is None:
+        print_step("--", "Senza localizzazione il filtro di Kalman non viene attivato")
         return None
     try:
         pose_filter = create_pose_filter()
-        print_step("OK", "Stabilizza la posizione stimata con il filtro di Kalman")
+        print_step("OK", "Il filtro di Kalman stabilizzerà la posizione calcolata dai marker")
         return pose_filter
     except Exception as exc:
-        print_step("!!", f"Non stabilizza la posizione stimata: {exc}")
+        print_step(
+            "!!",
+            "Il filtro di Kalman non è disponibile: la posizione calcolata dai marker "
+            f"non verrà stabilizzata ({exc})",
+        )
         return None
 
 
@@ -284,20 +317,27 @@ def _configure_mission_display(dashboard, *, scenario_name, apriltag_autopilot) 
 
 def _report_autonomy(*, apriltag_autopilot, pose_estimator, waypoints) -> None:
     if apriltag_autopilot is not None and pose_estimator is not None:
-        print_step("OK", "Vola da solo lungo il percorso quando attivi l'autonomia")
+        print_step(
+            "OK",
+            "Il volo autonomo è disponibile: una volta in aria si attiva con il tasto "
+            f"{APP_CONFIG.joystick.label_autonomy}",
+        )
     elif apriltag_autopilot is not None:
-        print_step("!!", "Non può volare da solo: manca la localizzazione")
+        print_step("!!", "Il volo autonomo non è disponibile perché manca la localizzazione")
     elif not waypoints:
-        pass
+        print_step("--", "Senza un percorso valido il drone potrà essere pilotato solo manualmente")
     elif not APP_CONFIG.apriltag_autopilot.enabled:
-        print_step("--", "Non volerà da solo: il volo autonomo è disattivato nella configurazione")
+        print_step("--", "Il volo autonomo è disattivato nella configurazione")
     else:
-        print_step("!!", "Non può volare da solo: il percorso scelto non è valido")
+        print_step(
+            "!!",
+            "Il volo autonomo non è disponibile perché il percorso scelto non è valido",
+        )
 
 
 def _build_flight_logger(subsystems: Subsystems) -> None:
     subsystems.flight_data_logger = create_flight_data_logger()
-    print_step("OK", "Registra i dati del volo per l'analisi a terra")
+    print_step("OK", "I dati del volo verranno registrati per l'analisi a terra")
 
 
 def _build_autopilot(
@@ -339,8 +379,8 @@ def _build_safety_net_monitor(
     if safety_net_model_name not in loaded_model_names:
         print_step(
             "!!",
-            "Non controllerà le reti di sicurezza: manca il modello "
-            f"{_model_label(safety_net_model_name)}",
+            "Il controllo delle reti di sicurezza non è disponibile perché manca il modello "
+            f"«{_model_label(safety_net_model_name)}»",
         )
         return None
 
@@ -349,7 +389,7 @@ def _build_safety_net_monitor(
         safety_net_model_name=safety_net_model_name,
         safety_net_confirm_sec=(path.safety_net_confirm_sec or 0.0),
     )
-    print_step("OK", "Controlla la presenza delle reti di sicurezza durante le soste")
+    print_step("OK", "Durante le soste verrà verificata la presenza delle reti di sicurezza")
     return monitor
 
 
@@ -358,19 +398,21 @@ def _report_person_watch(*, loaded_model_names, restricted_area_tolerance_px) ->
     if restricted_area_model_name not in loaded_model_names:
         print_step(
             "OK",
-            "Sorveglia le cadute delle persone; per le aree vietate manca il "
-            f"modello {_model_label(restricted_area_model_name)}",
+            "Durante le soste verranno segnalate le cadute delle persone; gli ingressi "
+            "nelle aree interdette non saranno controllati perché manca il modello "
+            f"«{_model_label(restricted_area_model_name)}»",
         )
     elif restricted_area_tolerance_px is None:
         print_step(
             "OK",
-            "Sorveglia le cadute delle persone; questo percorso non prevede "
-            "le aree vietate",
+            "Durante le soste verranno segnalate le cadute delle persone; questo "
+            "scenario non prevede il controllo delle aree interdette",
         )
     else:
         print_step(
             "OK",
-            "Sorveglia le cadute delle persone e il superamento delle aree vietate",
+            "Durante le soste verranno segnalate le cadute delle persone e gli "
+            "ingressi nelle aree interdette",
         )
 
 
@@ -422,8 +464,8 @@ def _build_dpi_monitor(
     if dpi_model_name not in loaded_model_names:
         print_step(
             "!!",
-            "Non verificherà i dispositivi di protezione: manca il modello "
-            f"{_model_label(dpi_model_name)}",
+            "Il controllo dei dispositivi di protezione non è disponibile perché manca "
+            f"il modello «{_model_label(dpi_model_name)}»",
         )
         return None
 
@@ -441,18 +483,21 @@ def _build_dpi_monitor(
     if not monitor.required_items:
         print_step(
             "!!",
-            "Non verificherà i dispositivi di protezione: nel percorso non "
-            f"ne riconosco nessuno ({', '.join(unknown_items)}). "
-            f"Sono previsti: {', '.join(dpi_item_names())}.",
+            "Il controllo dei dispositivi di protezione non è disponibile: nessuno dei "
+            f"dispositivi indicati nello scenario è riconosciuto ({', '.join(unknown_items)}); "
+            f"quelli ammessi sono {_elenco_italiano(dpi_item_names())}",
         )
         return None
 
-    active_items = ", ".join(dpi_item_names(monitor.required_items))
-    print_step("OK", f"Verifica i dispositivi di protezione: {active_items}")
+    active_items = _elenco_italiano(dpi_item_names(monitor.required_items))
+    print_step(
+        "OK",
+        f"Durante le soste verrà verificato che gli operatori indossino {active_items}",
+    )
     if unknown_items:
         print_step(
             "!!",
-            "Non riconosco questi dispositivi nel percorso e li ignoro: "
+            "Questi dispositivi di protezione non sono riconosciuti e verranno ignorati: "
             f"{', '.join(unknown_items)}",
         )
     return monitor
@@ -501,32 +546,30 @@ def _build_loops(
     )
 
 
-def _phase_onboard(subsystems: Subsystems, *, path) -> None:
-    _announce_phase("Fase 5 · Funzioni di bordo")
-
-    detectors = _build_detectors(
-        required_model_names(path) if path is not None else ()
-    )
+def _phase_navigation(subsystems: Subsystems, *, path):
+    _announce_phase("Fase 5 · Navigazione autonoma")
     pose_filter = _build_pose_filter(subsystems)
-    _build_flight_logger(subsystems)
-
     apriltag_autopilot = _build_autopilot(
         subsystems,
         path=path,
         pose_estimator=subsystems.pose_estimator,
         dashboard=subsystems.dashboard,
     )
+    return pose_filter, apriltag_autopilot
 
-    _build_monitors(subsystems, detectors=detectors, path=path)
 
-    _build_loops(
-        subsystems,
-        controller=subsystems.controller,
-        detectors=detectors,
-        pose_estimator=subsystems.pose_estimator,
-        pose_filter=pose_filter,
-        apriltag_autopilot=apriltag_autopilot,
+def _phase_surveillance(subsystems: Subsystems, *, path) -> list:
+    _announce_phase("Fase 6 · Sorveglianza del cantiere")
+    detectors = _build_detectors(
+        required_model_names(path) if path is not None else ()
     )
+    _build_monitors(subsystems, detectors=detectors, path=path)
+    return detectors
+
+
+def _phase_recording(subsystems: Subsystems) -> None:
+    _announce_phase("Fase 7 · Registrazione dei dati")
+    _build_flight_logger(subsystems)
 
 
 def _announce_ready(dashboard) -> None:
@@ -534,14 +577,10 @@ def _announce_ready(dashboard) -> None:
     dashboard.clear_alerts()
 
     log_ready_banner(
-        "Tutto pronto",
-        "Il drone è a terra e risponde al controller: puoi decollare quando vuoi.",
-        format_joystick_help(),
-        (
-            "Da qui in avanti il volo si segue nella finestra del drone.",
-            "Su questa console restano soltanto gli errori, se ce ne saranno.",
-        ),
+        "Pronto al decollo",
+        "Il drone è a terra e attende i comandi del controller",
     )
+    _announce_phase("Registro degli errori")
 
 
 def run_startup(subsystems: Subsystems, original_stdout) -> bool:
@@ -557,18 +596,35 @@ def run_startup(subsystems: Subsystems, original_stdout) -> bool:
         return False
 
     _phase_localization(subsystems)
+    end_startup_transcript()
 
     subsystems.screen = pygame.display.get_surface()
     return True
 
 
 def arm_mission(subsystems: Subsystems) -> bool:
-    scelto, selected_path, screen = _phase_mission_path(subsystems.screen)
+    ritorno = subsystems.scenario_change
+    subsystems.scenario_change = False
+    if ritorno:
+        redraw_startup_transcript()
+
+    scelto, selected_path, screen = _phase_mission_path(subsystems.screen, ritorno=ritorno)
     subsystems.screen = screen
     if not scelto:
         return False
 
-    _phase_onboard(subsystems, path=selected_path)
+    pose_filter, apriltag_autopilot = _phase_navigation(subsystems, path=selected_path)
+    detectors = _phase_surveillance(subsystems, path=selected_path)
+    _phase_recording(subsystems)
+
+    _build_loops(
+        subsystems,
+        controller=subsystems.controller,
+        detectors=detectors,
+        pose_estimator=subsystems.pose_estimator,
+        pose_filter=pose_filter,
+        apriltag_autopilot=apriltag_autopilot,
+    )
 
     _announce_ready(subsystems.dashboard)
     return True

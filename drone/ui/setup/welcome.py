@@ -15,56 +15,71 @@ from drone.hardware.joystick import (
 from drone.ui import fonts
 from drone.ui.appearance import ASSETS_DIR, LOGO_GLOB, PROJECT_TITLE
 from drone.ui.setup.effects import (
+    CARD_EDGE_ON,
+    CARD_FILL,
+    CHIP_EDGE,
+    CHIP_FILL,
     CYAN_BRIGHT,
+    CYAN_TEXT,
     CrossfadeBlitter,
-    FOOTER_RULE,
+    ICON_CYAN,
     WHITE,
-    YELLOW,
-    draw_hover_button,
+    draw_alert,
+    draw_pad_arrow,
+    draw_pad_button,
+    draw_pad_key,
+    draw_setup_footer,
     fade_screen,
     flash_button_press,
     focus_window,
+    footer_rule_y,
     grid_background,
     maximize_window,
 )
 from drone.ui.shapes import glow_box, paint_supersampled
 
 
-PLATFORM_TITLE = "Cos'è WORK-GUARDIAN?"
+PLATFORM_TITLE = "Presentazione del progetto"
 
-PLATFORM_PARAGRAPHS = (
-    "Work-Guardian è un progetto per la sicurezza nei cantieri edili, con particolare "
-    "attenzione alle lavorazioni in quota. Integra un drone, un dispositivo indossabile per "
-    "gli operatori e una stazione centrale, così da osservare sia l'ambiente di lavoro sia le "
-    "condizioni dei lavoratori.",
-    "Il flusso video acquisito dal drone aiuta a individuare protezioni mancanti e situazioni "
-    "di pericolo. Il dispositivo indossabile rileva parametri fisiologici che possono "
-    "segnalare una condizione anomala. La stazione centrale riunisce queste informazioni e "
-    "comunica le criticità al supervisore e agli operatori interessati, offrendo un supporto "
-    "per intervenire tempestivamente.",
+PLATFORM_TEXT = (
+    "Work-Guardian è un Cyber-Physical-Human System progettato per supportare la sicurezza "
+    "nei cantieri edili, con particolare attenzione alle attività svolte in quota. Il progetto "
+    "integra in un’unica architettura un drone per la sorveglianza dell’area di lavoro, un "
+    "wearable device per il monitoraggio degli operatori e una central control station "
+    "incaricata di coordinare l’intero sistema. Il drone acquisisce immagini del cantiere, che "
+    "vengono analizzate mediante tecniche di Computer Vision per verificare la presenza dei "
+    "dispositivi di protezione individuale e collettiva e rilevare eventuali situazioni di "
+    "pericolo. Parallelamente, il wearable device esegue il real-time monitoring di alcuni "
+    "parametri fisiologici dell’operatore, come la frequenza cardiaca e la saturazione "
+    "dell’ossigeno, permettendo di riconoscere possibili condizioni di affaticamento o "
+    "malessere. La central control station raccoglie e integra i dati provenienti dai diversi "
+    "sottosistemi, genera gli alert e fornisce al supervisore una visione complessiva dello "
+    "stato del cantiere. Work-Guardian combina così il monitoraggio dell’ambiente e degli "
+    "operatori, favorendo l’individuazione tempestiva delle criticità e supportando la "
+    "gestione delle situazioni di emergenza."
 )
 
 NOTES = (
     (
-        "SICUREZZA AUTOMATICA",
-        "Quando la batteria è sotto al 30% il drone rientra e atterra automaticamente alla "
-        "home. Quando la batteria è sotto al 20% il drone atterra nella posizione corrente.",
+        "BATTERIA BASSA",
+        "Sotto il 30% il drone in volo autonomo rientra alla home; sotto il 20% esegue un "
+        "atterraggio d’emergenza.",
     ),
     (
-        "DATI DEL VOLO",
-        "I dati del volo vengono salvati solo quando la missione termina correttamente o "
-        "quando viene premuto il tasto Options.",
+        "SALVATAGGIO DEI DATI",
+        "Il volo si registra a missione conclusa o dopo un atterraggio automatico, non con "
+        "quello manuale.",
     ),
 )
 
-COMMANDS_TITLE = "Comandi per il controllo del drone"
+COMMANDS_TITLE = "Comandi del controller"
 
-START_TEXT = "Inizia"
+NEXT_TEXT = "Avanti"
 EXIT_TEXT = "Esci"
 
 
 def start_label() -> str:
-    return f"{START_TEXT} ({APP_CONFIG.joystick.label_setup_confirm})"
+    return f"{NEXT_TEXT} ({APP_CONFIG.joystick.label_setup_confirm})"
 
 
 def exit_label() -> str:
@@ -99,30 +114,13 @@ def _base_layout_scale(width: int, height: int) -> float:
     )
 
 
-_FRAME_OUTER = (4, 160, 172)
-_FRAME_INNER = (4, 222, 230)
+_NOTE_ICONS = ("battery", "save")
 
-_CARD_BG = (3, 31, 55)
-_CARD_EDGE = (4, 206, 216)
-_UNDERLINE = (8, 244, 252)
-_NOT_FOCUSED = (252, 190, 16)
-
-_NOTE_BG = (3, 39, 69)
-_NOTE_STYLES = (
-    ("warn", YELLOW, (240, 210, 8)),
-    ("info", CYAN_BRIGHT, (4, 196, 220)),
-)
-_WARN_INK = (10, 14, 18)
-
-_PAD_FILL = (12, 14, 20)
-_PAD_RIM = (112, 120, 136)
-_PAD_INK = (236, 240, 246)
-
-_GLYPH_COLORS = {
-    "Croce": ("cross", (124, 178, 232)),
-    "Cerchio": ("circle", (255, 102, 102)),
-    "Quadrato": ("square", (244, 122, 220)),
-    "Triangolo": ("triangle", (64, 226, 160)),
+_GLYPH_SHAPES = {
+    "Croce": "cross",
+    "Cerchio": "circle",
+    "Quadrato": "square",
+    "Triangolo": "triangle",
 }
 
 _LEFT_SHARE = 0.57
@@ -132,23 +130,29 @@ _TITLE_RULE_Y = 82
 
 _BODY_TOP = 126
 _BODY_STEP = 33
-_PARAGRAPH_GAP = 14
 
-_NOTE_INSET = 30
-_NOTE_ICON_X = 50
-_NOTE_RULE_X = 94
-_NOTE_TEXT_X = 112
-_NOTE_TITLE_Y = 30
-_NOTE_TEXT_Y = 60
-_NOTE_STEP = 28
-_NOTE_BOTTOM = 30
-_NOTE_GAP = 14
+_NOTE_INSET = 22
+_NOTE_ICON = 40
+_NOTE_ICON_X = 40
+_NOTE_RULE_X = 74
+_NOTE_TEXT_X = 90
+_NOTE_TITLE_Y = 24
+_NOTE_TEXT_Y = 48
+_NOTE_STEP = 22
+_NOTE_BOTTOM = 22
+_NOTE_GAP = 10
 
-_ROWS_TOP = 128
-_ROW_STEP = 46
+_CARD_PAD_X = 32
+
+_ROWS_TOP = _BODY_TOP
+_ROW_STEP = 48
+_ROW_STEP_MAX = 64
 _ACTION_STEP = 28
-_GLYPH_GAP = 10
-_GROUP_GAP = 26
+_SYMBOL_R = 21
+_KEY_H = 38
+_KEY_PAD = 30
+_ARROW_GAP = 8
+_ACTION_GAP = 30
 
 _BANNER_SOURCE_SIZE = (1983, 797)
 
@@ -232,14 +236,14 @@ def _banner_image(width: int, height: int) -> Optional["Image.Image"]:
 def _draw_banner(img, box, fonts_map) -> None:
     x0, y0, x1, y1 = box
     u = _unit()
-    glow_box(img, box, radius=3 * u, edge=_FRAME_OUTER, width=2 * u, glow=8 * u, glow_alpha=150)
+    glow_box(img, box, radius=3 * u, edge=CARD_EDGE_ON, width=2 * u, glow=8 * u, glow_alpha=150)
     inset = int(round(6 * u))
     banner = _banner_image(x1 - x0 - 2 * inset, y1 - y0 - 2 * inset)
     draw = ImageDraw.Draw(img)
     if banner is not None:
         img.paste(banner, (x0 + inset, y0 + inset))
     else:
-        draw.rectangle((x0 + inset, y0 + inset, x1 - inset, y1 - inset), fill=_CARD_BG)
+        draw.rectangle((x0 + inset, y0 + inset, x1 - inset, y1 - inset), fill=CARD_FILL)
         draw.text(
             ((x0 + x1) / 2, (y0 + y1) / 2), PROJECT_TITLE,
             font=fonts_map["fallback_title"], fill=WHITE, anchor="mm",
@@ -247,7 +251,7 @@ def _draw_banner(img, box, fonts_map) -> None:
     bordo = 4 * u
     draw.rectangle(
         (x0 + bordo, y0 + bordo, x1 - bordo, y1 - bordo),
-        outline=_FRAME_INNER, width=max(1, round(1.6 * u)),
+        outline=CYAN_BRIGHT, width=max(1, round(1.6 * u)),
     )
 
 
@@ -268,15 +272,15 @@ def _wrap(text: str, font, max_width: int) -> list[str]:
 
 def _draw_card(img, box, title, fonts_map) -> None:
     u = _unit()
-    glow_box(img, box, radius=14 * u, edge=_CARD_EDGE, width=2 * u, fill=_CARD_BG,
+    glow_box(img, box, radius=14 * u, edge=CARD_EDGE_ON, width=2 * u, fill=CARD_FILL,
              glow=7 * u, glow_alpha=120)
     draw = ImageDraw.Draw(img)
     x0, y0, x1, _y1 = box
-    draw.text((x0 + _scale(32), y0 + _scale(_TITLE_Y)), title, font=fonts_map["card"],
+    draw.text((x0 + _scale(_CARD_PAD_X), y0 + _scale(_TITLE_Y)), title, font=fonts_map["card"],
               fill=WHITE, anchor="lm")
     draw.line(
         (x0 + _scale(29), y0 + _scale(_TITLE_RULE_Y), x1 - _scale(29), y0 + _scale(_TITLE_RULE_Y)),
-        fill=_UNDERLINE, width=max(1, round(3 * u)),
+        fill=CYAN_BRIGHT, width=max(1, round(3 * u)),
     )
 
 
@@ -284,106 +288,108 @@ def _paint_icon(img, cx, cy, reach, paint) -> None:
     paint_supersampled(img, (cx - reach, cy - reach, cx + reach, cy + reach), (cx, cy), paint)
 
 
-def _draw_glyph(img, kind, color, cx, cy, r) -> None:
-    u = _unit()
-
-    def paint(d, ax, ay, s):
-        rr = r * s
-        d.ellipse((ax - rr, ay - rr, ax + rr, ay + rr), fill=_PAD_FILL, outline=_PAD_RIM,
-                  width=max(1, round(2 * u * s)))
-        w = max(1, round(3.4 * u * s))
-        k = rr * 0.42
-        if kind == "cross":
-            d.line((ax - k, ay - k, ax + k, ay + k), fill=color, width=w)
-            d.line((ax - k, ay + k, ax + k, ay - k), fill=color, width=w)
-        elif kind == "circle":
-            d.ellipse((ax - k, ay - k, ax + k, ay + k), outline=color, width=w)
-        elif kind == "square":
-            q = k * 0.9
-            d.rectangle((ax - q, ay - q, ax + q, ay + q), outline=color, width=w)
-        else:
-            d.polygon(
-                [
-                    (ax, ay - k * 1.1),
-                    (ax + k * 1.12, ay + k * 0.82),
-                    (ax - k * 1.12, ay + k * 0.82),
-                ],
-                outline=color, width=w,
-            )
-
-    _paint_icon(img, cx, cy, r + _scale(3), paint)
+def _draw_label(draw, cx, cy, text, font, fill) -> None:
+    sinistra, _alto, destra, _basso = font.getbbox(text, anchor="ls")
+    _sx, cima, _dx, base = font.getbbox("H", anchor="ls")
+    draw.text((cx - (sinistra + destra) / 2, cy - (cima + base) / 2), text, font=font,
+              fill=fill, anchor="ls")
 
 
-def _draw_stick(img, letter: str, cx, cy, r, font) -> None:
+def _draw_glyph(img, kind, cx, cy, r) -> None:
     u = _unit()
     _paint_icon(
         img, cx, cy, r + _scale(3),
-        lambda d, ax, ay, s: d.ellipse(
-            (ax - r * s, ay - r * s, ax + r * s, ay + r * s),
-            fill=_PAD_FILL, outline=_PAD_RIM, width=max(1, round(2 * u * s)),
-        ),
+        lambda d, ax, ay, s: draw_pad_button(d, kind, ax, ay, r * s, u * s),
     )
-    ImageDraw.Draw(img).text((cx, cy), letter, font=font, fill=_PAD_INK, anchor="mm")
 
 
-def _draw_key(img, x, cy, w, h, label: str, font) -> None:
+def _draw_stick(img, letter: str, verso: str, cx, cy, r, font) -> None:
     u = _unit()
     _paint_icon(
-        img, x + w / 2, cy, w / 2 + _scale(3),
-        lambda d, ax, ay, s: d.rounded_rectangle(
-            (ax - w / 2 * s, ay - h / 2 * s, ax + w / 2 * s, ay + h / 2 * s), radius=_scale(9) * s,
-            fill=_PAD_FILL, outline=_PAD_RIM, width=max(1, round(2 * u * s)),
-        ),
+        img, cx, cy, r + _scale(3),
+        lambda d, ax, ay, s: draw_pad_button(d, None, ax, ay, r * s, u * s),
     )
-    ImageDraw.Draw(img).text((x + w / 2, cy), label, font=font, fill=_PAD_INK, anchor="mm")
-
-
-def _draw_warn_icon(draw, cx, cy, size, color) -> None:
-    h = size * 0.9
-    draw.polygon(
-        [(cx, cy - h / 2), (cx + h * 0.58, cy + h / 2), (cx - h * 0.58, cy + h / 2)],
-        fill=color,
+    _draw_label(ImageDraw.Draw(img), cx, cy, letter, font, WHITE)
+    freccia_x = cx + 2 * r + _scale(_ARROW_GAP)
+    _paint_icon(
+        img, freccia_x, cy, r + _scale(3),
+        lambda d, ax, ay, s: draw_pad_arrow(d, verso, ax, ay, r * s, u * s),
     )
-    draw.line((cx, cy - h * 0.12, cx, cy + h * 0.2), fill=_WARN_INK,
-              width=max(1, round(size * 0.08)))
-    e = size * 0.05
-    draw.ellipse((cx - e, cy + h * 0.3 - e, cx + e, cy + h * 0.3 + e), fill=_WARN_INK)
 
 
-def _draw_info_icon(draw, cx, cy, size, color, font) -> None:
-    r = size * 0.46
-    draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=color,
-                 width=max(1, round(size * 0.075)))
-    draw.text((cx, cy + size * 0.02), "i", font=font, fill=color, anchor="mm")
+def _draw_key(img, label: str, cx, cy, size, font) -> None:
+    u = _unit()
+    w, h = size
+    _paint_icon(
+        img, cx, cy, w / 2 + _scale(3),
+        lambda d, ax, ay, s: draw_pad_key(d, ax, ay, w * s, h * s, u * s),
+    )
+    _draw_label(ImageDraw.Draw(img), cx, cy, label, font, WHITE)
 
 
-def _note_styles() -> list:
-    return [_NOTE_STYLES[i % len(_NOTE_STYLES)] for i in range(len(NOTES))]
+def _draw_battery_icon(img, cx, cy, size, color) -> None:
+    def paint(d, ax, ay, s):
+        lato = size * s
+        tratto = max(1, round(lato * 0.075))
+        w = lato * 0.76
+        h = lato * 0.46
+        polo_w = lato * 0.09
+        polo_h = h * 0.44
+        x0 = ax - (w + polo_w) / 2
+        y0 = ay - h / 2
+        d.rounded_rectangle((x0, y0, x0 + w, y0 + h), radius=lato * 0.08, outline=color,
+                            width=tratto)
+        d.rounded_rectangle((x0 + w, ay - polo_h / 2, x0 + w + polo_w, ay + polo_h / 2),
+                            radius=polo_w * 0.35, fill=color)
+        margine = tratto + lato * 0.05
+        carica = (w - 2 * margine) * 0.24
+        d.rounded_rectangle((x0 + margine, y0 + margine, x0 + margine + carica, y0 + h - margine),
+                            radius=lato * 0.02, fill=color)
+
+    _paint_icon(img, cx, cy, size * 0.6, paint)
+
+
+def _draw_save_icon(img, cx, cy, size, color) -> None:
+    def paint(d, ax, ay, s):
+        lato = size * s
+        tratto = max(1, round(lato * 0.075))
+        m = lato * 0.38
+        taglio = m * 0.42
+        x0, y0, x1, y1 = ax - m, ay - m, ax + m, ay + m
+        d.polygon([(x0, y0), (x1 - taglio, y0), (x1, y0 + taglio), (x1, y1), (x0, y1)],
+                  outline=color, width=tratto)
+        d.rectangle((ax - m * 0.52, y0, ax + m * 0.34, y0 + m * 0.64), fill=color)
+        d.rectangle((ax + m * 0.04, y0 + m * 0.16, ax + m * 0.2, y0 + m * 0.48), fill=CHIP_FILL)
+        d.rectangle((x0 + m * 0.32, ay + m * 0.14, x1 - m * 0.32, y1), outline=color,
+                    width=tratto)
+
+    _paint_icon(img, cx, cy, size * 0.6, paint)
+
+
+def _note_icons() -> list:
+    return [_NOTE_ICONS[i % len(_NOTE_ICONS)] for i in range(len(NOTES))]
 
 
 def _platform_layout(box, fonts_map):
     x0, y0, x1, y1 = box
-    testo_x = x0 + _scale(32)
-    max_w = x1 - x0 - _scale(64)
+    testo_x = x0 + _scale(_CARD_PAD_X)
+    max_w = x1 - x0 - 2 * _scale(_CARD_PAD_X)
     righe = []
     y = y0 + _scale(_BODY_TOP)
     ultima = y
-    for indice, paragrafo in enumerate(PLATFORM_PARAGRAPHS):
-        if indice:
-            y += _scale(_PARAGRAPH_GAP)
-        for riga in _wrap(paragrafo, fonts_map["body"], max_w):
-            righe.append((testo_x, y, riga))
-            ultima = y
-            y += _scale(_BODY_STEP)
+    for riga in _wrap(PLATFORM_TEXT, fonts_map["body"], max_w):
+        righe.append((testo_x, y, riga))
+        ultima = y
+        y += _scale(_BODY_STEP)
 
     nx0, nx1 = x0 + _scale(_NOTE_INSET), x1 - _scale(_NOTE_INSET)
     nota_x = nx0 + _scale(_NOTE_TEXT_X)
     fondo = y1 - _scale(_NOTE_INSET)
     note = []
-    for (titolo, testo), stile in reversed(list(zip(NOTES, _note_styles()))):
+    for (titolo, testo), icona in reversed(list(zip(NOTES, _note_icons()))):
         corpo = _wrap(testo, fonts_map["note_text"], nx1 - _scale(22) - nota_x)
         alto = _scale(_NOTE_TEXT_Y) + _scale(_NOTE_STEP) * (len(corpo) - 1) + _scale(_NOTE_BOTTOM)
-        note.append(((nx0, fondo - alto, nx1, fondo), titolo, corpo, stile))
+        note.append(((nx0, fondo - alto, nx1, fondo), titolo, corpo, icona))
         fondo -= alto + _scale(_NOTE_GAP)
     note.reverse()
 
@@ -396,83 +402,75 @@ def _draw_platform_card(img, box, fonts_map) -> None:
     righe, note, _ci_sta = _platform_layout(box, fonts_map)
     draw = ImageDraw.Draw(img)
     for x, y, riga in righe:
-        draw.text((x, y), riga, font=fonts_map["body"], fill=WHITE, anchor="lm")
+        draw.text((x, y), riga, font=fonts_map["body"], fill=CYAN_TEXT, anchor="lm")
 
     u = _unit()
-    for (bx0, by0, bx1, by1), titolo, corpo, (forma, colore, bordo) in note:
-        glow_box(img, (bx0, by0, bx1, by1), radius=10 * u, edge=bordo, width=2 * u,
-                 fill=_NOTE_BG, glow=5 * u, glow_alpha=90)
+    for (bx0, by0, bx1, by1), titolo, corpo, icona in note:
+        glow_box(img, (bx0, by0, bx1, by1), radius=10 * u, edge=CHIP_EDGE, width=2 * u,
+                 fill=CHIP_FILL)
         draw = ImageDraw.Draw(img)
         cy = (by0 + by1) / 2
         icona_x = bx0 + _scale(_NOTE_ICON_X)
-        if forma == "warn":
-            _draw_warn_icon(draw, icona_x, cy, _scale(46), colore)
+        if icona == "battery":
+            _draw_battery_icon(img, icona_x, cy, _scale(_NOTE_ICON), ICON_CYAN)
         else:
-            _draw_info_icon(draw, icona_x, cy, _scale(46), colore, fonts_map["info"])
+            _draw_save_icon(img, icona_x, cy, _scale(_NOTE_ICON), ICON_CYAN)
         linea_x = bx0 + _scale(_NOTE_RULE_X)
         mezza = (by1 - by0) / 2 - _scale(18)
-        draw.line((linea_x, cy - mezza, linea_x, cy + mezza), fill=colore,
+        draw.line((linea_x, cy - mezza, linea_x, cy + mezza), fill=ICON_CYAN,
                   width=max(1, round(2.4 * u)))
         testo_x = bx0 + _scale(_NOTE_TEXT_X)
         draw.text((testo_x, by0 + _scale(_NOTE_TITLE_Y)), titolo, font=fonts_map["note_label"],
-                  fill=colore, anchor="lm")
+                  fill=CYAN_BRIGHT, anchor="lm")
         for n, riga in enumerate(corpo):
             draw.text((testo_x, by0 + _scale(_NOTE_TEXT_Y) + _scale(_NOTE_STEP) * n), riga,
-                      font=fonts_map["note_text"], fill=WHITE, anchor="lm")
-
-
-def _only_glyphs(righe) -> bool:
-    return all(lato is None and nome in _GLYPH_COLORS for nome, _azione, lato in righe)
+                      font=fonts_map["note_text"], fill=CYAN_TEXT, anchor="lm")
 
 
 def _commands_layout(box, fonts_map):
     x0, y0, x1, y1 = box
-    colonna = x0 + _scale(34)
-    raggio = _scale(21)
+    colonna = x0 + _scale(_CARD_PAD_X)
+    raggio = _scale(_SYMBOL_R)
     gruppi = joystick_action_groups()
     assi = joystick_axis_details()
 
     tasti = [tasto for _sezione, righe in gruppi for tasto, _azione in righe]
-    chiavi = [tasto for tasto in tasti if tasto not in _GLYPH_COLORS]
-    pastiglia_w = max(
-        [int(fonts_map["key"].getlength(tasto)) + _scale(28) for tasto in chiavi]
+    chiavi = [tasto for tasto in tasti if tasto not in _GLYPH_SHAPES]
+    tasto_w = max(
+        [int(fonts_map["key"].getlength(tasto)) + _scale(_KEY_PAD) for tasto in chiavi]
         + [2 * raggio]
     )
-    pastiglia_h = _scale(36)
-    nome_x = colonna + 2 * raggio + _scale(14)
-    fine_nomi = max(
-        [colonna + pastiglia_w]
-        + [nome_x + fonts_map["name"].getlength(f"+ {verso}") for _lato, verso, _azione in assi]
-    )
-    azione_x = int(fine_nomi) + _scale(36)
-    azione_w = x1 - _scale(30) - azione_x
+    simbolo_w = max(tasto_w, 4 * raggio + _scale(_ARROW_GAP))
+    azione_x = colonna + simbolo_w + _scale(_ACTION_GAP)
+    azione_w = x1 - _scale(_CARD_PAD_X) - azione_x
 
-    sezioni = [[(t, a, None) for t, a in righe] for _sezione, righe in gruppi[:-1]]
-    sezioni.append([(f"+ {verso}", azione, lato) for lato, verso, azione in assi])
-    sezioni += [[(t, a, None) for t, a in righe] for _sezione, righe in gruppi[-1:]]
+    voci = [(t, a, None) for _sezione, gruppo in gruppi[:-1] for t, a in gruppo]
+    voci += [(verso, azione, lato) for lato, verso, azione in assi]
+    voci += [(t, a, None) for _sezione, gruppo in gruppi[-1:] for t, a in gruppo]
+    testi = [_wrap(azione, fonts_map["action"], azione_w) for _nome, azione, _lato in voci]
+    extra = [_scale(_ACTION_STEP) * (len(linee) - 1) for linee in testi]
+
+    cima = y0 + _scale(_ROWS_TOP)
+    fondo = y1 - _scale(_NOTE_INSET) - raggio
+    passo = _scale(_ROW_STEP)
+    if len(voci) > 1:
+        riempie = (fondo - cima - sum(extra)) / (len(voci) - 1)
+        passo = max(passo, min(_scale(_ROW_STEP_MAX), riempie))
 
     elementi = []
-    y = y0 + _scale(_ROWS_TOP)
+    y = cima
     ultima = y
-    precedente = None
-    for righe in sezioni:
-        if precedente is not None:
-            stretto = _only_glyphs(precedente) and _only_glyphs(righe)
-            y += _scale(_GLYPH_GAP if stretto else _GROUP_GAP)
-        for nome, azione, lato in righe:
-            linee = _wrap(azione, fonts_map["action"], azione_w)
-            extra = _scale(_ACTION_STEP) * (len(linee) - 1)
-            cy = y + extra / 2
-            elementi.append((cy, nome, linee, lato))
-            ultima = cy + extra / 2
-            y += _scale(_ROW_STEP) + extra
-        precedente = righe
+    for (nome, _azione, lato), linee, alto in zip(voci, testi, extra):
+        cy = y + alto / 2
+        elementi.append((cy, nome, linee, lato))
+        ultima = cy + alto / 2
+        y += passo + alto
 
     colonne = {
         "colonna": colonna,
         "raggio": raggio,
-        "pastiglia": (pastiglia_w, pastiglia_h),
-        "nome_x": nome_x,
+        "tasto": (tasto_w, _scale(_KEY_H)),
+        "simbolo_w": simbolo_w,
         "azione_x": azione_x,
     }
     return elementi, colonne, ultima + raggio + _scale(18) <= y1
@@ -482,23 +480,19 @@ def _draw_commands_card(img, box, fonts_map) -> None:
     _draw_card(img, box, COMMANDS_TITLE, fonts_map)
     elementi, c, _ci_sta = _commands_layout(box, fonts_map)
     colonna, raggio = c["colonna"], c["raggio"]
-    glifo_x = colonna + raggio
+    cerchio_x = colonna + raggio
     for cy, nome, linee, lato in elementi:
         if lato is not None:
-            _draw_stick(img, lato, glifo_x, cy, raggio, fonts_map["stick"])
-            ImageDraw.Draw(img).text((c["nome_x"], cy), nome, font=fonts_map["name"],
-                                     fill=WHITE, anchor="lm")
-        elif nome in _GLYPH_COLORS:
-            forma, colore = _GLYPH_COLORS[nome]
-            _draw_glyph(img, forma, colore, glifo_x, cy, raggio)
+            _draw_stick(img, lato, nome, cerchio_x, cy, raggio, fonts_map["stick"])
+        elif nome in _GLYPH_SHAPES:
+            _draw_glyph(img, _GLYPH_SHAPES[nome], cerchio_x, cy, raggio)
         else:
-            _draw_key(img, colonna, cy, c["pastiglia"][0], c["pastiglia"][1], nome,
-                      fonts_map["key"])
+            _draw_key(img, nome, colonna + c["tasto"][0] / 2, cy, c["tasto"], fonts_map["key"])
         draw = ImageDraw.Draw(img)
         ay = cy - _scale(_ACTION_STEP) * (len(linee) - 1) / 2
         for linea in linee:
             draw.text((c["azione_x"], ay), linea, font=fonts_map["action"],
-                      fill=WHITE, anchor="lm")
+                      fill=CYAN_TEXT, anchor="lm")
             ay += _scale(_ACTION_STEP)
 
 
@@ -508,14 +502,10 @@ def _fonts_map():
         "card": fonts.sans_bold(S(34)),
         "body": fonts.sans(S(23)),
         "key": fonts.sans_bold(S(18)),
-        "name": fonts.sans_bold(S(23)),
         "action": fonts.sans(S(23)),
         "stick": fonts.sans_bold(S(19)),
-        "note_label": fonts.sans_bold(S(21)),
-        "note_text": fonts.sans(S(21)),
-        "info": fonts.sans_bold(S(29)),
-        "chip": fonts.sans_bold(S(25)),
-        "button": fonts.sans_bold(S(25)),
+        "note_label": fonts.sans_bold(S(19)),
+        "note_text": fonts.sans(S(19)),
         "fallback_title": fonts.sans_bold(S(46)),
     }
 
@@ -526,9 +516,9 @@ def _geometry(width, height, exit_rect, start_rect):
     W = width * SS
     sinistra_x = exit_rect.x * SS
     destra_x = start_rect.right * SS
-    linea = (exit_rect.y - int(round(28 * k))) * SS
+    linea = footer_rule_y(exit_rect.y, supersample=SS, unit=SS * k)
     banner_top = _scale(30)
-    banner_bottom = banner_top + _scale(212)
+    banner_bottom = banner_top + _scale(190)
     gap = _scale(20)
     disponibile = destra_x - sinistra_x - gap
     sinistra = int(disponibile * _LEFT_SHARE)
@@ -588,38 +578,31 @@ def button_rects(width: int, height: int):
     return start_rect, exit_rect
 
 
-def _rect_box(rect):
-    SS = _SUPERSAMPLE
-    return (rect.x * SS, rect.y * SS, rect.right * SS, rect.bottom * SS)
-
-
 def _render_welcome_screen(width, height, *, focused, start_rect, exit_rect,
                            start_hover, exit_hover):
     SS = _SUPERSAMPLE
     W, H = width * SS, height * SS
 
     fonts_map, geometria = _fit_layout(width, height, exit_rect, start_rect)
-    u = _unit()
+    piede = SS * _base_layout_scale(width, height)
 
-    img = grid_background(W, H, _scale(64), _scale(6))
+    img = grid_background(W, H, int(round(64 * piede)), int(round(6 * piede)))
     _draw_banner(img, geometria["banner"], fonts_map)
 
     sinistra, destra = _card_boxes(geometria)
     _draw_platform_card(img, sinistra, fonts_map)
     _draw_commands_card(img, destra, fonts_map)
 
-    draw = ImageDraw.Draw(img)
-    draw.line((geometria["x0"], geometria["rule"], geometria["x1"], geometria["rule"]),
-              fill=FOOTER_RULE, width=max(1, round(1.3 * u)))
     if not focused:
-        draw.text(
-            (W // 2, int((exit_rect.y + exit_rect.height / 2) * SS)),
-            NOT_FOCUSED_NOTE, font=fonts_map["chip"], fill=_NOT_FOCUSED, anchor="mm",
+        draw_alert(
+            ImageDraw.Draw(img), W // 2, int(round(exit_rect.centery * SS)), NOT_FOCUSED_NOTE,
+            fonts.sans_bold(int(round(28 * piede))), unit=piede,
         )
-    draw_hover_button(img, _rect_box(exit_rect), exit_label(), fonts_map["button"],
-                      unit=u, hover=exit_hover)
-    draw_hover_button(img, _rect_box(start_rect), start_label(), fonts_map["button"],
-                      unit=u, hover=start_hover)
+    draw_setup_footer(
+        img,
+        [(exit_rect, exit_label(), exit_hover), (start_rect, start_label(), start_hover)],
+        (), supersample=SS, unit=piede,
+    )
 
     final = img.resize((width, height), Image.LANCZOS)
     return pygame.image.frombytes(final.tobytes(), final.size, "RGB").convert()
@@ -649,17 +632,19 @@ def show_welcome_screen(screen) -> bool:
                 screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
                 continue
             comando = read_setup_action(event)
-            if comando in ("confirm", "select"):
-                return True
-            if comando == "cancel":
-                return False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if start_rect.collidepoint(event.pos):
-                    flash_button_press(screen, cached_surf, start_rect)
-                    return True
-                if exit_rect.collidepoint(event.pos):
-                    flash_button_press(screen, cached_surf, exit_rect)
-                    return False
+                    comando = "confirm"
+                elif exit_rect.collidepoint(event.pos):
+                    comando = "cancel"
+            if comando in ("confirm", "select", "cancel"):
+                avanti = comando != "cancel"
+                flash_button_press(screen, _render_welcome_screen(
+                    width, height, focused=focused,
+                    start_rect=start_rect, exit_rect=exit_rect,
+                    start_hover=avanti, exit_hover=not avanti,
+                ))
+                return avanti
 
         mouse_pos = pygame.mouse.get_pos()
         start_hover = start_rect.collidepoint(mouse_pos)

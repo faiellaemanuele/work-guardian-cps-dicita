@@ -24,7 +24,7 @@ def _disconnect_current_joystick():
     try:
         _JOYSTICK.quit()
     except Exception:
-        LOGGER.exception("Errore durante la chiusura del joystick.")
+        LOGGER.exception("Il controller PS4 non è stato chiuso correttamente")
     finally:
         _JOYSTICK = None
 
@@ -189,7 +189,7 @@ def _handle_device_removed(event, active_instance_id, active_legacy_id) -> bool:
     if not era_il_nostro:
         return False
 
-    LOGGER.warning("Joystick disconnesso.")
+    LOGGER.warning("Il controller PS4 è stato scollegato")
     _disconnect_current_joystick()
 
     if pygame.joystick.get_count() > 0:
@@ -372,22 +372,22 @@ _ACTION_GROUPS = (
     (
         "VOLO",
         (
-            ("label_takeoff", "Take off"),
-            ("label_land", "Land"),
+            ("label_takeoff", "Decolla"),
+            ("label_land", "Atterra"),
         ),
     ),
     (
         "SUPERVISIONE",
         (
-            ("label_detection", "Attiva e disattiva la detection"),
-            ("label_autonomy", "Attiva e disattiva il volo automatico"),
+            ("label_detection", "Attiva e disattiva il riconoscimento"),
+            ("label_autonomy", "In aria, attiva e disattiva il volo autonomo"),
         ),
     ),
     (
         "SESSIONE",
         (
-            ("label_scenario", "Quando il drone è a terra, torna alla schermata precedente"),
-            ("label_quit", "Chiude la sessione"),
+            ("label_scenario", "A terra, torna alla scelta dello scenario"),
+            ("label_quit", "Chiude il programma e fa atterrare il drone se è in volo"),
         ),
     ),
 )
@@ -422,24 +422,3 @@ def joystick_axis_actions() -> tuple[tuple[str, str], ...]:
         (getattr(mapping, attributo), azione)
         for attributo, _lato, _verso, azione in _AXIS_DETAILS
     )
-
-
-def format_joystick_help() -> str:
-    w = 26
-    sep = "─" * 58
-    righe = [
-        "",
-        "Comandi del controller",
-        sep,
-        f"{'Pulsante':<{w}}  Azione",
-        sep,
-    ]
-    righe += [f"{tasto:<{w}}  {azione}" for tasto, azione in joystick_actions()]
-    righe += [
-        sep,
-        f"{'Asse':<{w}}  Movimento",
-        sep,
-    ]
-    righe += [f"{asse:<{w}}  {azione}" for asse, azione in joystick_axis_actions()]
-    righe.append(sep)
-    return "\n".join(righe)

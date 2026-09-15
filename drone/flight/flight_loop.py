@@ -52,9 +52,9 @@ def main():
             release_mission(subsystems)
 
     except KeyboardInterrupt:
-        print_event("Interruzione da tastiera (Ctrl+C)")
+        print_event("Il programma è stato interrotto da tastiera (Ctrl+C)")
     except Exception as exc:
-        print_event(f"Errore imprevisto: {exc}", prefix="ERRORE")
+        print_event(f"Si è verificato un errore imprevisto: {exc}", prefix="ERRORE")
         raise
     finally:
         run_postflight(subsystems, original_stdout)
@@ -164,7 +164,7 @@ def run_flight(subsystems: Subsystems) -> bool:
             try:
                 controller.land()
             except Exception:
-                LOGGER.warning("Errore durante l'atterraggio dopo rientro interrotto.", exc_info=True)
+                LOGGER.warning("L'atterraggio dopo il rientro alla home non è riuscito", exc_info=True)
             running = False
             continue
 

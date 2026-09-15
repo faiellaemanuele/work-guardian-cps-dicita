@@ -271,6 +271,7 @@ class AppConfig:
     ground_confirm_after_sec: float = 3.0
 
     log_level: str = "WARNING"
+    console_error_repeat_after_sec: float = 5.0
     flight_log_max_samples: int | None = 25_000
 
     flight_sessions_dir: Path = PACKAGE_DIR / "flight_sessions"
@@ -302,6 +303,11 @@ class AppConfig:
     battery_warning_repeat_after_sec: float = 15.0
 
     def __post_init__(self):
+        if self.console_error_repeat_after_sec < 0:
+            raise ValueError(
+                "console_error_repeat_after_sec "
+                f"({self.console_error_repeat_after_sec}) non può essere negativo."
+            )
         if self.battery_warning_pct <= self.battery_critical_pct:
             raise ValueError(
                 f"battery_warning_pct ({self.battery_warning_pct}) deve essere maggiore di "

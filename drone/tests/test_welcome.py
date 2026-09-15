@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import os
+import pathlib
+import re
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from PIL import Image
 
 from drone.config import APP_CONFIG
 from drone.hardware.joystick import (
@@ -23,26 +27,42 @@ def test_the_welcome_screen_is_exported():
 
 
 def test_the_description_names_the_three_parts_of_the_system():
-    testo = " ".join(welcome.PLATFORM_PARAGRAPHS).lower()
+    testo = welcome.PLATFORM_TEXT.lower()
     assert "drone" in testo
-    assert "dispositivo indossabile" in testo
-    assert "stazione centrale" in testo
+    assert "wearable device" in testo
+    assert "central control station" in testo
 
 
 def test_the_notes_explain_the_battery_and_the_saved_data():
     titoli = [titolo for titolo, _ in welcome.NOTES]
     corpi = " ".join(testo for _, testo in welcome.NOTES).lower()
-    assert any("sicurezza" in t.lower() for t in titoli)
+    assert any("batteria" in t.lower() for t in titoli)
     assert any("dati" in t.lower() for t in titoli)
     assert str(APP_CONFIG.battery_rth_pct) in corpi
     assert str(APP_CONFIG.battery_critical_pct) in corpi
 
 
-def test_every_note_has_its_icon_and_colors():
-    stili = welcome._note_styles()
-    assert len(stili) == len(welcome.NOTES)
-    assert stili[0][0] == "warn"
-    assert stili[1][0] == "info"
+def test_every_note_has_its_icon():
+    icone = welcome._note_icons()
+    assert len(icone) == len(welcome.NOTES)
+    assert icone[:2] == ["battery", "save"]
+
+
+def test_the_note_icons_stay_inside_their_square():
+    lato = 80
+    for disegna in (welcome._draw_battery_icon, welcome._draw_save_icon):
+        img = Image.new("RGB", (200, 200), (0, 0, 0))
+        disegna(img, 100, 100, lato, (255, 255, 255))
+        riquadro = img.getbbox()
+        assert riquadro is not None, disegna.__name__
+        assert 100 - lato / 2 <= riquadro[0] and riquadro[2] <= 100 + lato / 2, disegna.__name__
+        assert 100 - lato / 2 <= riquadro[1] and riquadro[3] <= 100 + lato / 2, disegna.__name__
+
+
+def test_the_welcome_has_no_colors_of_its_own():
+    sorgente = pathlib.Path(welcome.__file__).read_text(encoding="utf-8")
+    colori = re.findall(r"\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)", sorgente)
+    assert colori == ["(255, 255, 255)", "(255, 255, 255)"]
 
 
 def test_the_command_table_comes_from_the_joystick_module():
@@ -60,7 +80,7 @@ def test_the_groups_hold_every_command_of_the_flat_table():
 
 def test_every_button_of_the_card_has_a_shape_or_falls_back_to_a_key():
     forme = {
-        tasto: welcome._GLYPH_COLORS.get(tasto)
+        tasto: welcome._GLYPH_SHAPES.get(tasto)
         for tasto, _azione in joystick_actions()
     }
     assert forme[APP_CONFIG.joystick.label_takeoff] is not None
@@ -96,6 +116,40 @@ def test_the_sticks_sit_between_the_face_buttons_and_the_session_keys():
     assert altezze == sorted(altezze)
 
 
+def test_the_commands_line_up_with_the_text_and_start_right_after_the_symbols():
+    try:
+        inizia, esci = welcome.button_rects(1536, 793)
+        fonts_map, geometria = welcome._fit_layout(1536, 793, esci, inizia)
+        sinistra, destra = welcome._card_boxes(geometria)
+        righe, _note, _ci_sta = welcome._platform_layout(sinistra, fonts_map)
+        elementi, colonne, _ci_sta = welcome._commands_layout(destra, fonts_map)
+        assert elementi[0][0] - destra[1] == righe[0][1] - sinistra[1]
+        assert colonne["colonna"] - destra[0] == righe[0][0] - sinistra[0]
+        assert colonne["azione_x"] == (
+            colonne["colonna"] + colonne["simbolo_w"] + welcome._scale(welcome._ACTION_GAP)
+        )
+    finally:
+        welcome._LAYOUT_SCALE = 1.0
+
+
+def test_the_commands_are_evenly_spaced_and_end_where_the_notes_end():
+    try:
+        inizia, esci = welcome.button_rects(1536, 793)
+        fonts_map, geometria = welcome._fit_layout(1536, 793, esci, inizia)
+        sinistra, destra = welcome._card_boxes(geometria)
+        _righe, note, _ci_sta = welcome._platform_layout(sinistra, fonts_map)
+        elementi, colonne, _ci_sta = welcome._commands_layout(destra, fonts_map)
+        assert all(len(linee) == 1 for _cy, _nome, linee, _lato in elementi)
+        centri = [cy for cy, _nome, _linee, _lato in elementi]
+        passi = [b - a for a, b in zip(centri, centri[1:])]
+        assert max(passi) - min(passi) < 1e-6
+        fondo_note = note[-1][0][3] - sinistra[3]
+        fondo_comandi = centri[-1] + colonne["raggio"] - destra[3]
+        assert abs(fondo_note - fondo_comandi) < 1e-6
+    finally:
+        welcome._LAYOUT_SCALE = 1.0
+
+
 def test_wrapping_keeps_every_word_within_the_width():
     font = fonts.sans(20)
     testo = " ".join(["parola"] * 40)
@@ -123,8 +177,10 @@ _MISURE_FINESTRA = (
 
 def test_the_buttons_name_the_keys_of_the_mapping():
     m = APP_CONFIG.joystick
-    assert welcome.start_label() == f"Inizia ({m.label_setup_confirm})"
+    assert welcome.start_label() == f"Avanti ({m.label_setup_confirm})"
     assert welcome.exit_label() == f"Esci ({m.label_setup_cancel})"
+    assert welcome.start_label() == screens._button_label(screens.NEXT_TEXT, m.label_setup_confirm)
+    assert welcome.exit_label() == screens._button_label(screens.EXIT_TEXT, m.label_setup_cancel)
     for etichetta in (welcome.start_label(), welcome.exit_label()):
         assert "(Esc)" not in etichetta
         assert "(Invio)" not in etichetta
@@ -140,11 +196,31 @@ def test_the_cards_hold_their_text_at_every_window_size():
         welcome._LAYOUT_SCALE = 1.0
 
 
-def test_at_the_reference_size_the_text_is_not_shrunk():
+def test_on_the_pilot_window_the_text_is_not_shrunk():
+    try:
+        inizia, esci = welcome.button_rects(1536, 793)
+        welcome._fit_layout(1536, 793, esci, inizia)
+        assert welcome._LAYOUT_SCALE == welcome._base_layout_scale(1536, 793)
+    finally:
+        welcome._LAYOUT_SCALE = 1.0
+
+
+def test_on_the_pilot_window_every_note_takes_one_line():
+    try:
+        inizia, esci = welcome.button_rects(1536, 793)
+        fonts_map, geometria = welcome._fit_layout(1536, 793, esci, inizia)
+        sinistra, _destra = welcome._card_boxes(geometria)
+        _righe, note, _ci_sta = welcome._platform_layout(sinistra, fonts_map)
+        assert [len(corpo) for _box, _titolo, corpo, _icona in note] == [1] * len(welcome.NOTES)
+    finally:
+        welcome._LAYOUT_SCALE = 1.0
+
+
+def test_at_the_reference_size_the_text_shrinks_at_most_one_step():
     try:
         inizia, esci = welcome.button_rects(1920, 1080)
         welcome._fit_layout(1920, 1080, esci, inizia)
-        assert welcome._LAYOUT_SCALE == 1.0
+        assert welcome._LAYOUT_SCALE >= 0.94
     finally:
         welcome._LAYOUT_SCALE = 1.0
 

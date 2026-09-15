@@ -33,7 +33,7 @@ def save_plots(logger, output_dir: str | Path) -> list[Path]:
             matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        LOGGER.exception("matplotlib non installato: impossibile generare i grafici.")
+        LOGGER.exception("Non è stato possibile generare i grafici perché manca la libreria matplotlib")
         return []
 
     from drone.ui.plots.autopilot_plots import save_autopilot_plots

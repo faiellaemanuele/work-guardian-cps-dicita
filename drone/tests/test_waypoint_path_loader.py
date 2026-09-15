@@ -179,7 +179,7 @@ def test_safety_net_tags_unreachable_with_min_sec_names_the_real_cause():
 
         assert paths == []
         assert any("safety_net_tags_by_stop" in m for m in messages), messages
-        assert not any("'safety_net_confirm_sec' definito" in m for m in messages), messages
+        assert not any("'safety_net_confirm_sec' è definito" in m for m in messages), messages
 
 
 def test_safety_net_tags_absent_is_none():

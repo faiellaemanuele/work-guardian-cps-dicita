@@ -34,7 +34,7 @@ class RealTelloController:
             from djitellopy import Tello
         except ImportError as exc:
             raise ImportError(
-                "Per usare il drone reale devi installare djitellopy: pip install djitellopy"
+                "per collegarsi al drone serve la libreria djitellopy (pip install djitellopy)"
             ) from exc
 
         _silence_djitellopy_logging()
@@ -61,13 +61,13 @@ class RealTelloController:
 
     def connect(self) -> None:
         if self.is_connected:
-            LOGGER.info("DRONE | Il drone è già connesso.")
+            LOGGER.info("Il drone è già collegato")
             return
 
         try:
             self.tello.connect()
         except Exception:
-            LOGGER.exception("DRONE | Errore durante la connessione al Tello.")
+            LOGGER.exception("Il collegamento al drone non è riuscito")
             raise
 
         self.is_connected = True
@@ -75,9 +75,12 @@ class RealTelloController:
         try:
             self.tello.get_battery()
         except Exception:
-            LOGGER.exception("DRONE | Errore durante la lettura iniziale della batteria.")
+            LOGGER.info(
+                "Non è stato possibile leggere la carica della batteria al momento del collegamento",
+                exc_info=True,
+            )
 
-        LOGGER.info("DRONE | Connesso al Tello.")
+        LOGGER.info("Il drone è collegato")
 
     def _telemetry_says_airborne(self) -> bool:
         height = self.get_height_cm()
@@ -87,16 +90,15 @@ class RealTelloController:
         time.sleep(self._AIRBORNE_CONFIRM_DELAY_SEC)
         height_confirm = self.get_height_cm()
         if height_confirm is not None and height_confirm > self._AIRBORNE_HEIGHT_CM:
-            LOGGER.warning(
-                "DRONE | La telemetria indica il drone in volo "
-                "(altezza=%scm, confermata %scm).",
+            LOGGER.info(
+                "Secondo la telemetria il drone è in volo (altezza di %s cm, confermata a %s cm)",
                 height,
                 height_confirm,
             )
             return True
 
-        LOGGER.warning(
-            "DRONE | Altezza in volo non confermata (%scm poi %scm).",
+        LOGGER.info(
+            "La seconda lettura non conferma l'altezza di volo (%s cm, poi %s cm)",
             height,
             height_confirm,
         )
@@ -116,16 +118,15 @@ class RealTelloController:
                 break
 
         if battery is None:
-            LOGGER.warning(
-                "DRONE | Decollo rifiutato: batteria non leggibile dopo %d tentativi "
-                "(guardia di sicurezza).",
+            LOGGER.info(
+                "Decollo rifiutato: la carica della batteria non è leggibile dopo %d tentativi",
                 self._PRE_TAKEOFF_BATTERY_READ_ATTEMPTS,
             )
             return False
 
         if battery <= self.min_takeoff_battery_pct:
-            LOGGER.warning(
-                "DRONE | Decollo rifiutato: batteria %s%% <= soglia minima %s%%.",
+            LOGGER.info(
+                "Decollo rifiutato: la batteria è al %s%% e per decollare deve superare il %s%%",
                 battery,
                 self.min_takeoff_battery_pct,
             )
@@ -135,15 +136,18 @@ class RealTelloController:
 
     def takeoff(self) -> bool:
         if not self.is_connected:
-            LOGGER.warning("DRONE | Impossibile decollare: drone non connesso.")
+            LOGGER.warning("Il decollo non è stato eseguito perché il drone non è collegato")
             return False
 
         if self.is_flying:
-            LOGGER.info("DRONE | Il drone è già in volo.")
+            LOGGER.info("Il comando di decollo è stato ignorato perché il drone è già in volo")
             return False
 
         if self._telemetry_says_airborne():
-            LOGGER.warning("DRONE | Decollo ignorato: stato riallineato a 'in volo'.")
+            LOGGER.info(
+                "Il comando di decollo è stato ignorato: il drone risultava a terra ma era "
+                "già in volo, e lo stato è stato corretto"
+            )
             self.is_flying = True
             return True
 
@@ -153,36 +157,36 @@ class RealTelloController:
         try:
             self.tello.takeoff()
         except Exception:
-            LOGGER.exception("DRONE | Errore durante il decollo.")
+            LOGGER.exception("Il comando di decollo non è andato a buon fine")
             raise
 
         self.is_flying = True
-        LOGGER.info("DRONE | Decollo eseguito.")
+        LOGGER.info("Decollo eseguito")
         return True
 
     def land(self) -> bool:
         if not self.is_connected:
-            LOGGER.warning("DRONE | Impossibile atterrare: drone non connesso.")
+            LOGGER.warning("L'atterraggio non è stato eseguito perché il drone non è collegato")
             return False
 
         if not self.is_flying:
             if not self._telemetry_says_airborne():
-                LOGGER.info("DRONE | Il drone è già a terra.")
+                LOGGER.info("Il comando di atterraggio è stato ignorato perché il drone è già a terra")
                 return False
-            LOGGER.warning(
-                "DRONE | Atterraggio richiesto con stato 'a terra' ma telemetria in volo: "
-                "stato riallineato e atterraggio eseguito."
+            LOGGER.info(
+                "Il drone risultava a terra, ma secondo la telemetria è in volo: "
+                "lo stato è stato corretto e l'atterraggio è in corso"
             )
             self.is_flying = True
 
         try:
             self.tello.land()
         except Exception:
-            LOGGER.exception("DRONE | Errore durante l'atterraggio.")
+            LOGGER.exception("Il comando di atterraggio non è andato a buon fine")
             raise
 
         self.is_flying = False
-        LOGGER.info("DRONE | Atterraggio eseguito.")
+        LOGGER.info("Atterraggio eseguito")
         return True
 
     def send_rc_control(self, lr: int, fb: int, ud: int, yaw: int) -> bool:
@@ -197,7 +201,7 @@ class RealTelloController:
                 self._clamp_rc_value(yaw),
             )
         except Exception:
-            LOGGER.exception("DRONE | Errore durante l'invio dei comandi RC.")
+            LOGGER.exception("Non è stato possibile inviare i comandi di movimento al drone")
             raise
 
         return True
@@ -208,7 +212,7 @@ class RealTelloController:
             try:
                 battery = self.tello.get_battery()
             except Exception:
-                LOGGER.exception("DRONE | Errore durante la lettura della batteria.")
+                LOGGER.info("Non è stato possibile leggere la carica della batteria", exc_info=True)
 
         return {
             "mode": "REAL",
@@ -224,7 +228,7 @@ class RealTelloController:
         try:
             height = self.tello.get_height()
         except Exception:
-            LOGGER.exception("DRONE | Errore durante la lettura dell'altezza.")
+            LOGGER.exception("Non è stato possibile leggere l'altezza del drone")
             return None
 
         try:
@@ -235,19 +239,19 @@ class RealTelloController:
     def notify_landed_externally(self) -> None:
         if self.is_flying:
             self.is_flying = False
-            LOGGER.warning("DRONE | Stato riallineato: drone rilevato a terra mentre risultava in volo.")
+            LOGGER.info("Il drone risultava in volo, ma è a terra: lo stato è stato corretto")
 
     def _streamoff_after_failed_start(self) -> None:
         try:
             self.tello.streamoff()
         except Exception:
             LOGGER.exception(
-                "DRONE | Errore nel chiudere il flusso video dopo l'avvio non riuscito."
+                "Non è stato possibile chiudere il video della camera dopo l'avvio non riuscito"
             )
 
     def start_video_stream(self) -> None:
         if not self.is_connected:
-            raise RuntimeError("Connetti prima il drone.")
+            raise RuntimeError("il drone deve essere collegato prima di avviare il video")
 
         self.stop_video_stream()
 
@@ -264,7 +268,7 @@ class RealTelloController:
             stream_started = True
             frame_reader = self.tello.get_frame_read()
         except Exception:
-            LOGGER.exception("DRONE | Errore durante l'avvio del flusso video.")
+            LOGGER.exception("Non è stato possibile avviare il video della camera")
             if stream_started:
                 self._streamoff_after_failed_start()
             raise
@@ -272,10 +276,10 @@ class RealTelloController:
         if frame_reader is None:
             if stream_started:
                 self._streamoff_after_failed_start()
-            raise RuntimeError("Impossibile avviare il lettore del flusso video.")
+            raise RuntimeError("non è stato possibile avviare la ricezione delle immagini")
 
         self.frame_reader = frame_reader
-        LOGGER.info("DRONE | Flusso video avviato.")
+        LOGGER.info("Il video della camera è stato avviato")
 
     def get_frame(self) -> Optional["np.ndarray"]:
         if self.frame_reader is None:
@@ -284,7 +288,7 @@ class RealTelloController:
         try:
             frame = self.frame_reader.frame
         except Exception:
-            LOGGER.exception("DRONE | Errore durante la lettura del frame video.")
+            LOGGER.exception("L'immagine della camera non è stata ricevuta")
             return None
 
         if frame is None:
@@ -305,17 +309,17 @@ class RealTelloController:
             try:
                 frame_reader.stop()
             except Exception:
-                LOGGER.exception("DRONE | Errore durante l'arresto del lettore di frame.")
+                LOGGER.exception("Non è stato possibile interrompere la ricezione delle immagini della camera")
 
         if self.is_connected:
             try:
                 self.tello.streamoff()
             except Exception:
                 if had_reader:
-                    LOGGER.exception("DRONE | Errore durante l'arresto del flusso video.")
+                    LOGGER.exception("Non è stato possibile fermare il video della camera")
 
         if had_reader:
-            LOGGER.info("DRONE | Flusso video fermato.")
+            LOGGER.info("Il video della camera è stato fermato")
 
     def end(self) -> None:
         self.stop_video_stream()
@@ -324,8 +328,8 @@ class RealTelloController:
             try:
                 self.tello.end()
             except Exception:
-                LOGGER.exception("DRONE | Errore durante la chiusura della connessione Tello.")
+                LOGGER.exception("Il collegamento al drone non è stato chiuso correttamente")
 
         self.is_connected = False
         self.is_flying = False
-        LOGGER.info("DRONE | Connessione chiusa.")
+        LOGGER.info("Il collegamento al drone è stato chiuso")

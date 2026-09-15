@@ -13,7 +13,6 @@ import pygame
 
 import drone.hardware.joystick as jt
 from drone.config import APP_CONFIG
-from drone.hardware.joystick import format_joystick_help
 
 
 def _etichette() -> list[str]:
@@ -23,19 +22,6 @@ def _etichette() -> list[str]:
         m.label_scenario, m.label_quit, m.label_axis_lr, m.label_axis_fb,
         m.label_axis_ud, m.label_axis_yaw,
     ]
-
-
-def _righe_tabella() -> list[str]:
-    return [
-        r for r in format_joystick_help().splitlines()
-        if r and not r.startswith(("─", "Comandi", "Pulsante", "Asse"))
-    ]
-
-
-def _larghezza_a_schermo(testo: str) -> int:
-    return sum(
-        2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in testo
-    )
 
 
 def test_apply_deadzone_zeroes_below_threshold():
@@ -107,26 +93,24 @@ def test_labels_have_no_ambiguous_width_characters():
             )
 
 
-def test_action_column_starts_at_the_same_place_on_every_row():
-    righe = _righe_tabella()
-    assert len(righe) == len(_etichette())
-    colonne = {_larghezza_a_schermo(r[:26]) for r in righe}
-    assert len(colonne) == 1, f"colonne disallineate: {sorted(colonne)}"
-
-
-def test_every_label_leaves_a_visible_gap_before_its_action():
-    for riga in _righe_tabella():
-        etichetta = riga[:26].rstrip()
-        stacco = len(riga[:26]) - len(etichetta) + 2
-        assert stacco >= 2, f"«{etichetta}» tocca la colonna dell'azione"
-
-
 def test_actions_are_verbs_like_the_onboard_functions():
-    testo = format_joystick_help()
-    for verbo in ("take off", "land", "attiva e disattiva", "chiude la sessione",
+    testo = " ".join(
+        azione for _tasto, azione in jt.joystick_actions() + jt.joystick_axis_actions()
+    ).lower()
+    for verbo in ("decolla", "atterra", "attiva e disattiva", "chiude il programma",
                   "trasla", "avanza", "sale e scende", "ruota"):
-        assert verbo in testo.lower()
-    assert "Movimento" in testo
+        assert verbo in testo
+
+
+def test_actions_use_the_words_of_the_program():
+    azioni = dict(jt.joystick_actions())
+    m = APP_CONFIG.joystick
+    assert "riconoscimento" in azioni[m.label_detection]
+    assert "volo autonomo" in azioni[m.label_autonomy]
+    assert "scelta dello scenario" in azioni[m.label_scenario]
+    testo = " ".join(azioni.values()).lower()
+    assert "detection" not in testo
+    assert "automatico" not in testo
 
 
 
@@ -336,15 +320,6 @@ def test_lo_strumento_di_diagnostica_tiene_una_copia_identica():
 
     for nome in _COPIE_NELLO_STRUMENTO:
         assert ast.dump(_definizione(strumento, nome)) == ast.dump(_definizione(modulo, nome)), nome
-
-
-def test_the_help_and_the_screens_read_the_same_table():
-    from drone.hardware.joystick import joystick_actions, joystick_axis_actions
-
-    testo = format_joystick_help()
-    for tasto, azione in joystick_actions() + joystick_axis_actions():
-        assert tasto in testo
-        assert azione in testo
 
 
 def test_the_scenario_button_has_its_own_index():

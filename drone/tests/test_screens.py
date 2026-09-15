@@ -55,11 +55,11 @@ def test_going_back_is_neither_a_path_nor_a_cancel():
 def test_the_buttons_name_the_controller_keys_and_not_the_keyboard():
     m = APP_CONFIG.joystick
     etichette = [
-        screens._button_label("Indietro", m.label_setup_back),
-        screens._button_label("Annulla", m.label_setup_cancel),
-        screens._button_label("Conferma", m.label_setup_confirm),
+        screens._button_label(screens.BACK_TEXT, m.label_setup_back),
+        screens._button_label(screens.EXIT_TEXT, m.label_setup_cancel),
+        screens._button_label(screens.NEXT_TEXT, m.label_setup_confirm),
     ]
-    assert etichette == ["Indietro (L1)", "Annulla (Share)", "Conferma (R1)"]
+    assert etichette == ["Indietro (L1)", "Esci (Share)", "Avanti (R1)"]
     for etichetta in etichette:
         assert "(Esc)" not in etichetta
         assert "(Invio)" not in etichetta

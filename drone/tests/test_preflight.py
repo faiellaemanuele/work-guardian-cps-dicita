@@ -134,7 +134,7 @@ def _sostituisci(**attributi):
 
 def _esegui(*, presentazione=True, rilevatori=None, percorso=None, percorsi=None,
             annulla_scenario=False, autopilota=True, stimatore=True,
-            controller=None):
+            controller=None, ritorno=False):
     schermo = _Screen()
     passi = []
     rilevatori = _detectors() if rilevatori is None else rilevatori
@@ -162,10 +162,11 @@ def _esegui(*, presentazione=True, rilevatori=None, percorso=None, percorsi=None
     with _sostituisci(
         Dashboard=_Dashboard,
         set_alert_sink=lambda *a, **k: None,
-        log_phase=lambda *a, **k: None,
+        log_phase=lambda titolo: passi.append(("FASE", titolo)),
+        end_startup_transcript=lambda: passi.append(("AVVIO_CONCLUSO", "")),
+        redraw_startup_transcript=lambda: passi.append(("RIDISEGNO", "")),
         log_title=lambda *a, **k: None,
         log_ready_banner=lambda *a, **k: None,
-        format_joystick_help=lambda: "",
         print_step=lambda esito, testo: passi.append((esito, testo)),
         print_event=lambda *a, **k: None,
         init_joystick=lambda: schermo,
@@ -186,6 +187,7 @@ def _esegui(*, presentazione=True, rilevatori=None, percorso=None, percorsi=None
     ):
         ok = run_startup(subsystems, sys.stdout)
         if ok:
+            subsystems.scenario_change = ritorno
             ok = arm_mission(subsystems)
     return _Esito(
         ok, subsystems, passi,
@@ -312,7 +314,7 @@ def test_restricted_area_proximity_comes_from_the_scenario():
         percorso=_Path(restricted_area_tolerance_px=12),
     )
     assert esito.subsystems.person_monitor._restricted_area_tolerance_px == 12.0
-    assert "aree vietate" in esito.testo("OK")
+    assert "aree interdette" in esito.testo("OK")
 
 
 def test_restricted_area_proximity_none_when_scenario_omits_it():
@@ -320,7 +322,7 @@ def test_restricted_area_proximity_none_when_scenario_omits_it():
         rilevatori=_detectors(_FALL, _AREE), percorso=_Path(fall_alarm_after_sec=2.0),
     )
     assert esito.subsystems.person_monitor._restricted_area_tolerance_px is None
-    assert "non prevede" in esito.testo("OK")
+    assert "non prevede il controllo delle aree interdette" in esito.testo("OK")
 
 
 def test_reports_the_missing_restricted_area_model():
@@ -397,12 +399,12 @@ def test_no_mission_configured_without_autopilot():
 
 def test_supervision_stops_are_named_in_the_route_message():
     esito = _esegui(percorso=_Path(supervision_waypoints=[2, 5]))
-    assert "con sosta ai punti 2 e 5" in esito.testo("OK")
+    assert "con soste di supervisione ai waypoint 2 e 5" in esito.testo()
 
 
 def test_a_single_supervision_stop_is_said_in_the_singular():
     esito = _esegui(percorso=_Path(supervision_waypoints=[3]))
-    assert "con sosta al punto 3" in esito.testo("OK")
+    assert "con una sosta di supervisione al waypoint 3" in esito.testo()
 
 
 def test_no_paths_available_leaves_the_mission_empty():
@@ -477,8 +479,98 @@ def test_says_the_route_is_invalid_when_the_autopilot_cannot_be_built():
 
 def test_says_nothing_about_flying_alone_without_a_route():
     esito = _esegui(autopilota=False, percorsi=[])
-    assert "volare da solo" not in esito.testo()
-    assert "volerà da solo" not in esito.testo()
+    assert "volo autonomo" not in esito.testo().lower()
+
+
+def test_model_loading_is_announced_before_the_wait():
+    esito = _esegui(rilevatori=_detectors(_DPI), percorso=_Path(dpi_required=["helmet"]))
+    testi = [t for _e, t in esito.passi]
+    annuncio = next(i for i, t in enumerate(testi) if t.startswith("Caricamento"))
+    caricati = next(i for i, t in enumerate(testi) if t.startswith("È stato caricato"))
+    assert annuncio < caricati
+
+
+def test_the_seven_phases_follow_the_order_of_the_mission():
+    esito = _esegui()
+    fasi = [t for e, t in esito.passi if e == "FASE"]
+    assert fasi == [
+        "Fase 1 · Controller di pilotaggio",
+        "Fase 2 · Collegamento al drone",
+        "Fase 3 · Localizzazione nel cantiere",
+        "Fase 4 · Scenario della missione",
+        "Fase 5 · Navigazione autonoma",
+        "Fase 6 · Sorveglianza del cantiere",
+        "Fase 7 · Registrazione dei dati",
+        "Registro degli errori",
+    ]
+
+
+def _fase_della_riga(passi, inizio):
+    fase = None
+    for esito, testo in passi:
+        if esito == "FASE":
+            fase = testo
+        elif testo.startswith(inizio):
+            return fase
+    raise AssertionError(f"nessuna riga comincia con «{inizio}»")
+
+
+def test_every_line_appears_under_the_phase_it_belongs_to():
+    esito = _esegui(
+        rilevatori=_detectors(_DPI),
+        percorso=_Path(dpi_required=["helmet"], dpi_alarm_after_sec=1.0),
+    )
+    assert _fase_della_riga(esito.passi, "Scenario scelto") == "Fase 4 · Scenario della missione"
+    assert _fase_della_riga(esito.passi, "Il filtro di Kalman") == "Fase 5 · Navigazione autonoma"
+    assert _fase_della_riga(esito.passi, "Il volo autonomo") == "Fase 5 · Navigazione autonoma"
+    assert _fase_della_riga(esito.passi, "Caricamento") == "Fase 6 · Sorveglianza del cantiere"
+    assert _fase_della_riga(esito.passi, "Durante le soste") == "Fase 6 · Sorveglianza del cantiere"
+    assert _fase_della_riga(esito.passi, "I dati del volo") == "Fase 7 · Registrazione dei dati"
+
+
+def test_the_navigation_phase_is_never_empty():
+    senza_localizzazione = _esegui(stimatore=False, percorsi=[], autopilota=False)
+    assert _fase_della_riga(senza_localizzazione.passi, "Senza localizzazione") == (
+        "Fase 5 · Navigazione autonoma"
+    )
+    assert _fase_della_riga(senza_localizzazione.passi, "Senza un percorso valido") == (
+        "Fase 5 · Navigazione autonoma"
+    )
+
+
+def test_the_startup_transcript_closes_after_the_localization():
+    passi = _esegui().passi
+    fine = passi.index(("AVVIO_CONCLUSO", ""))
+    assert passi.index(("FASE", "Fase 3 · Localizzazione nel cantiere")) < fine
+    assert fine < passi.index(("FASE", "Fase 4 · Scenario della missione"))
+
+
+def test_a_return_with_l1_redraws_the_terminal_and_says_so():
+    esito = _esegui(ritorno=True)
+    passi = esito.passi
+    assert passi.index(("RIDISEGNO", "")) < passi.index(("FASE", "Fase 4 · Scenario della missione"))
+    assert _fase_della_riga(passi, "Il pilota è tornato alla scelta dello scenario") == (
+        "Fase 4 · Scenario della missione"
+    )
+    assert esito.subsystems.scenario_change is False
+
+
+def test_the_first_mission_neither_redraws_nor_mentions_a_return():
+    esito = _esegui()
+    assert ("RIDISEGNO", "") not in esito.passi
+    assert "tornato alla scelta" not in esito.testo()
+
+
+def test_the_ready_banner_is_followed_by_the_error_log_header():
+    fasi = []
+    with _sostituisci(log_phase=fasi.append, log_ready_banner=lambda *a, **k: None):
+        preflight._announce_ready(_Dashboard())
+    assert fasi == ["Registro degli errori"]
+
+
+def test_no_loading_announced_when_the_scenario_needs_no_model():
+    esito = _esegui(percorso=_Path())
+    assert "Caricamento" not in esito.testo()
 
 
 
@@ -499,7 +591,7 @@ def test_un_drone_non_raggiungibile_ferma_il_preflight_senza_traccia_di_errore()
 
     assert esito.ok is False
     assert any(
-        stato == "!!" and "non raggiungibile" in testo.lower()
+        stato == "!!" and "non è raggiungibile" in testo.lower()
         for stato, testo in esito.passi
     ), esito.passi
     assert esito.subsystems.vision_loop is None
@@ -510,7 +602,7 @@ def test_un_flusso_video_che_non_parte_ferma_il_preflight():
 
     assert esito.ok is False
     assert any(
-        stato == "!!" and "flusso video" in testo.lower()
+        stato == "!!" and "video della camera" in testo.lower()
         for stato, testo in esito.passi
     ), esito.passi
 

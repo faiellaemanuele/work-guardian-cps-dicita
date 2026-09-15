@@ -38,10 +38,10 @@ def _read_catalog(base_dir):
     try:
         data = json.loads(catalog_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        LOGGER.error("Catalogo dei modelli YOLO non caricato (%s): %s", catalog_path, exc)
+        LOGGER.error("Non è stato possibile leggere il catalogo dei modelli YOLO (%s): %s", catalog_path, exc)
         return None
     if not isinstance(data, dict):
-        LOGGER.error("Catalogo dei modelli YOLO non valido (atteso un oggetto): %s", catalog_path)
+        LOGGER.error("Il catalogo dei modelli YOLO non è valido perché non contiene un oggetto JSON: %s", catalog_path)
         return None
     return data
 
@@ -52,7 +52,7 @@ def _coerce_color(raw, name):
     if not isinstance(raw, (list, tuple)) or len(raw) != 3 or not all(
         isinstance(c, int) and not isinstance(c, bool) for c in raw
     ):
-        LOGGER.warning("Catalogo dei modelli YOLO: colore non valido per '%s', si usa quello predefinito: %r.", name, raw)
+        LOGGER.warning("Nel catalogo dei modelli YOLO il colore %r del modello '%s' non è valido: viene usato il colore predefinito", raw, name)
         return _DEFAULT_COLOR
     return tuple(int(c) for c in raw)
 
@@ -62,23 +62,23 @@ def _models_from_catalog(data, base_dir) -> tuple[YoloModelConfig, ...]:
         return ()
     raw_models = data.get("models")
     if not isinstance(raw_models, list):
-        LOGGER.error("Catalogo dei modelli YOLO: chiave 'models' mancante o non valida.")
+        LOGGER.error("Nel catalogo dei modelli YOLO la chiave 'models' manca o non è valida")
         return ()
 
     models_dir = Path(base_dir).joinpath(*_CATALOG_RELATIVE).parent
     models: list[YoloModelConfig] = []
     for entry in raw_models:
         if not isinstance(entry, dict):
-            LOGGER.warning("Catalogo dei modelli YOLO: voce ignorata (non è un oggetto): %r.", entry)
+            LOGGER.warning("Nel catalogo dei modelli YOLO una voce è stata ignorata perché non è un oggetto: %r", entry)
             continue
         weights = entry.get("weights")
         if not isinstance(weights, str) or not weights:
-            LOGGER.warning("Catalogo dei modelli YOLO: voce ignorata ('weights' mancante): %r.", entry)
+            LOGGER.warning("Nel catalogo dei modelli YOLO una voce è stata ignorata perché manca la chiave 'weights': %r", entry)
             continue
         explicit = entry.get("name")
         name = explicit if isinstance(explicit, str) and explicit else _name_from_weights(weights)
         if not name:
-            LOGGER.warning("Catalogo dei modelli YOLO: voce ignorata (nome non ricavabile): %r.", entry)
+            LOGGER.warning("Nel catalogo dei modelli YOLO una voce è stata ignorata perché non è possibile ricavarne il nome: %r", entry)
             continue
         raw_label = entry.get("label")
         label = raw_label if isinstance(raw_label, str) and raw_label else name
@@ -92,7 +92,7 @@ def _models_from_catalog(data, base_dir) -> tuple[YoloModelConfig, ...]:
         )
 
     if not models:
-        LOGGER.error("Catalogo dei modelli YOLO: nessun modello valido.")
+        LOGGER.error("Il catalogo dei modelli YOLO non contiene alcun modello valido")
     return tuple(models)
 
 

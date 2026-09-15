@@ -69,7 +69,7 @@ class ObjectDetector:
                 device=self.device,
             )
         except Exception:
-            LOGGER.exception("Errore durante il riconoscimento YOLO.")
+            LOGGER.exception("Il riconoscimento visivo non è riuscito")
             raise
 
         if not results:
@@ -90,11 +90,11 @@ class ObjectDetector:
                     continue
 
                 if not isinstance(xyxy, (list, tuple)) or len(xyxy) != 4:
-                    LOGGER.warning("Riquadro YOLO in formato inatteso: %r", xyxy)
+                    LOGGER.warning("Un riquadro del riconoscimento è stato scartato perché il suo formato non è valido (%r)", xyxy)
                     continue
 
                 if not all(math.isfinite(v) for v in xyxy):
-                    LOGGER.warning("Riquadro YOLO con coordinate non valide: %r", xyxy)
+                    LOGGER.warning("Un riquadro del riconoscimento è stato scartato perché le sue coordinate non sono valide (%r)", xyxy)
                     continue
 
                 x1, y1, x2, y2 = map(int, xyxy)
@@ -106,7 +106,7 @@ class ObjectDetector:
 
                 if x2 <= x1 or y2 <= y1:
                     LOGGER.warning(
-                        "Riquadro YOLO senza area dopo la correzione ai bordi dell'immagine: (%s, %s, %s, %s)",
+                        "Un riquadro del riconoscimento è stato scartato perché cade fuori dall'immagine (%s, %s, %s, %s)",
                         x1,
                         y1,
                         x2,

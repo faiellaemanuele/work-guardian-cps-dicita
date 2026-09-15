@@ -212,6 +212,27 @@ def test_il_rilascio_non_atterra_e_non_chiude_il_drone():
     assert s.controller is not None
 
 
+def test_il_rilascio_prepara_il_ridisegno_del_terminale():
+    import drone.ui.console as co
+
+    s = _subsystems(flying=False)
+    originale = postflight.cv2
+    postflight.cv2 = type(
+        "_Cv2", (), {"destroyAllWindows": staticmethod(lambda: None), "error": Exception},
+    )
+    precedente = co._runtime_started
+    co._runtime_started = True
+    try:
+        release_mission(s)
+        in_volo = co._runtime_started
+    finally:
+        postflight.cv2 = originale
+        co._runtime_started = precedente
+
+    assert s.scenario_change is True
+    assert in_volo is False
+
+
 def test_il_rilascio_svuota_i_sottosistemi_della_missione():
     s = _subsystems(flying=False)
     originale = postflight.cv2

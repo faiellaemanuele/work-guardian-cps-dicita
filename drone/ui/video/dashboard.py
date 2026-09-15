@@ -175,7 +175,7 @@ class Dashboard:
     def _log_compose_error(self) -> None:
         if not self._render_error_logged:
             self._render_error_logged = True
-            LOGGER.warning("Composizione del cruscotto non riuscita.", exc_info=True)
+            LOGGER.warning("Non è stato possibile disegnare i pannelli del cruscotto: il video viene mostrato senza pannelli", exc_info=True)
 
     def _panels_for_height(self, total_height: int) -> Optional[np.ndarray]:
         interval = self._render_interval_sec
