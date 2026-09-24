@@ -1,0 +1,17 @@
+# Bytecode e cache di Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cache degli strumenti di test e analisi
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Ambienti virtuali
+.venv/
+venv/
+env/
+
+# Output generato dalle sessioni di volo (ricreato a ogni volo)
+drone/flight_sessions/

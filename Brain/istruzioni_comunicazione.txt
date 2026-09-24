@@ -1,0 +1,89 @@
+# Istruzioni per la comunicazione - (Architettura Aggiornata)
+
+Questo file contiene i passaggi definitivi e corretti per collegare il Drone Tello, lo Smartwatch e il Server centrale durante i test in laboratorio.
+
+## 1. Architettura di Rete (Il problema e la soluzione)
+
+**Il Problema:** Il PC non può generare un Hotspot Wi-Fi mentre è collegato al drone, perché Windows disabilita l'Hotspot se la rete di origine (il Tello) non ha accesso a Internet. Inoltre, non possiamo collegare l'orologio direttamente al Wi-Fi del drone perché il Tello applica l'isolamento hardware (i dispositivi connessi non comunicano tra loro, e il flusso video collassa).
+
+**La Soluzione:** Si utilizza uno smartphone come "ponte di rete". Le reti da gestire sono due e separate:
+
+* **Rete 1 (Volo - Wi-Fi del PC):** Il PC si collega in Wi-Fi al drone (es. `TELLO-C6D0CD`). *Questa rete serve esclusivamente per pilotaggio e video.*
+* **Rete 2 (Dati Orologio - Smartphone & Cavo USB):**
+* Lo smartphone attiva il proprio **Hotspot Wi-Fi** (a cui si collega l'orologio).
+* Lo stesso smartphone viene collegato al PC tramite cavo USB attivando il **Tethering USB** (Condivisione Rete USB).
+* *Perché questa configurazione:* Il telefono riceve i dati dall'orologio via etere e li inietta nel PC tramite il cavo fisico, aggirando il blocco di Windows e lasciando il Wi-Fi del PC completamente libero per il Tello.
+
+
+
+**Sicurezza (Fondamentale):**
+Windows classifica la rete del cavo USB come "Pubblica" o "Privata" e blocca tutto il traffico in entrata. **È obbligatorio disattivare il Firewall di Windows Defender** per le reti Pubbliche e Private, altrimenti il Broker Mosquitto rifiuterà la connessione dell'orologio (Errore -2).
+
+## 2. Indirizzi IP e Modifiche al Codice
+
+L'IP che unisce tutto il sistema è quello assegnato dalla rete del telefono alla scheda di rete USB del PC. Questo indirizzo varia in base al sistema operativo (es. gli iPhone assegnano `172.20.10.2`, i dispositivi Android assegnano tipicamente indirizzi `192.168.x.x`).
+
+**Come trovare l'IP corretto (da fare a telefono collegato):**
+
+1. Collega **PRIMA** il telefono al PC con il cavo USB e attiva il Tethering. *Se esegui questo controllo senza il telefono collegato, otterrai l'IP sbagliato.*
+2. Apri il Prompt dei Comandi sul PC e digita `ipconfig`.
+3. Ignora tutte le schede "LAN wireless Wi-Fi" e le eventuali schede virtuali (come quelle di VirtualBox, riconoscibili perché hanno il campo Gateway vuoto).
+4. Cerca la scheda fisica creata dal telefono (spesso chiamata *Scheda Ethernet*, *Ethernet 2*, *Apple Mobile Device Ethernet* o *Scheda NDIS*).
+5. L'indirizzo corretto è l'**Indirizzo IPv4** di questa scheda, confermato dal fatto che possiede un **Gateway predefinito** compilato.
+Chiameremo questo indirizzo `[IP_TETHERING]`.
+
+Tutti i software devono puntare a questo IP esatto:
+
+* **Configurazione Broker (Mosquitto):**
+Aprire il file `C:\Program Files\Mosquitto\mosquitto.conf` *come Amministratore* e assicurarsi che in fondo ci siano queste due righe esatte (senza il cancelletto `#` davanti):
+`listener 1883 0.0.0.0`
+`allow_anonymous true`
+* **Orologio (`orologio_operatore_v6.ino`):**
+* `WIFI_SSID` = Nome esatto dell'hotspot del telefono (rispettando le maiuscole).
+* `WIFI_PASS` = Password dell'hotspot.
+* `MQTT_BROKER` = `"[IP_TETHERING]"`
+*(Nota in caso di utilizzo di iPhone/iOS: attivare l'opzione "Ottimizza compatibilità" nelle impostazioni dell'hotspot, altrimenti l'ESP32 a 2.4 GHz non vedrà la rete).*
+
+
+* **Server Centrale (`Brain/server_cps.py`):**
+* `BROKER = "[IP_TETHERING]"`
+
+
+* **App Drone (`drone/config/app_config.py`):**
+* Aggiornare l'IP del broker a `"[IP_TETHERING]"`.
+
+
+
+## 3. Sequenza Esatta di Avvio
+
+L'ordine è critico. Un avvio errato porta a porte occupate o timeout di rete.
+
+1. **Preparazione Hardware:** Collega lo smartphone al PC via USB. Attiva il Tethering USB e l'Hotspot Wi-Fi. *(Nota per iOS: tieni lo schermo del telefono acceso e sbloccato sulla pagina dell'hotspot).*
+2. **Pulizia e Avvio Mosquitto:**
+* Apri PowerShell come Amministratore e uccidi eventuali processi in background: `taskkill /F /IM mosquitto.exe`
+* Spostati nella cartella: `cd "C:\Program Files\Mosquitto"`
+* Avvia il broker: `.\mosquitto.exe -c mosquitto.conf -v`
+
+
+3. **Avvio Sistema (Drone + Server):**
+* Collega il Wi-Fi del PC al drone Tello.
+* Avvia l'applicazione principale: `python drone/main.py`.
+* *Attenzione:* L'applicazione avvia **automaticamente** anche il Server CPS. Non avviare il server manualmente in un altro terminale, altrimenti gli allarmi partiranno doppi. Se devi avviarlo a mano per test isolati, disabilita prima l'avvio automatico: `$env:WG_AVVIA_SERVER = "0"; python drone/main.py`
+
+
+4. **Accensione Orologio:**
+* Alimenta lo smartwatch per ultimo. Troverà la rete Wi-Fi del telefono attiva e il Broker Mosquitto già in ascolto, collegandosi al volo.
+
+
+
+## 4. Che cosa arriva all'orologio
+
+Sul topic `cantiere/allarmi` pubblicano DUE mittenti distinti:
+
+* **Il Drone (`vision_loop.py` e logica di bordo):** Genera allarmi calcolati durante le soste di supervisione (superamento area interdetta, caduta, DPI mancanti). Questi messaggi possiedono un filtro anti-rimbalzo integrato nei monitor di volo per evitare spam.
+    * Solo gli allarmi con il campo `tipo` accendono l'orologio: `AREA_VIETATA`/`AREA_OK` e `DPI_MANCANTE`/`DPI_OK` (`_WATCH_TYPES` in `drone/flight/steps.py`). La **caduta** resta per scelta solo nel Log degli alert: chi è caduto non guarda l'orologio.
+    * Gli allarmi DPI portano anche `dettaglio` con l'elenco di cosa manca ("ELMETTO, GILET"), che l'orologio mostra sull'LCD.
+    * Gli allarmi DPI esistono solo nei percorsi che dichiarano `dpi_required`, oggi il percorso 2 ("Verifica della sicurezza dell'operatore"), e solo mentre il drone è fermo in una sosta di supervisione.
+* **Il Server CPS (`server_cps.py`):** Processa e invia gli allarmi medici (battito superiore a 120 bpm o saturazione bassa) e pericoli rilevati dalla telecamera (es. persona nell'area di scavo). Applica una pausa forzata di 10 secondi (`PAUSA_ALLARME_SEC`) tra un allarme e l'altro per evitare che l'orologio vibri ininterrottamente.
+
+*Nota di resilienza: Il server Python è progettato per sopravvivere alla ricezione di pacchetti JSON malformati (li scarta loggandoli come errore senza crashare) e tenta automaticamente la riconnessione ogni 5 secondi se Mosquitto dovesse cadere o riavviarsi.*
