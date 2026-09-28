@@ -7,7 +7,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import contextlib
 import json
-import logging
 import time
 from dataclasses import replace
 
@@ -577,44 +576,16 @@ def _mqtt_finto(client):
         modulo._mqtt_client = originale
 
 
-def test_la_telemetria_va_sul_topic_dei_sensori():
-    vl = _vision_loop()
-    client = _ClientMqtt()
-    with _mqtt_finto(client):
-        assert vl.publish_state(now=0.0) is True
-
-    topic, carico = client.pubblicazioni[0]
-    assert topic == "cantiere/sensori/drone"
-    assert set(json.loads(carico)) == {"battery", "is_flying", "position", "detections"}
-
-
-def test_le_detection_hanno_le_chiavi_che_il_server_legge():
-    vl = _vision_loop()
-    vl._cached_detections = [
-        {"name": "Caduta_delle_Persone", "detections": [{"label": "person", "confidence": 0.89}]}
-    ]
-    client = _ClientMqtt()
-    with _mqtt_finto(client):
-        vl.publish_state(now=0.0)
-
-    detections = json.loads(client.pubblicazioni[0][1])["detections"]
-    assert detections == [{"label": "person", "conf": 0.89}]
-
-
-def test_la_telemetria_rispetta_l_intervallo():
-    vl = _vision_loop()
-    client = _ClientMqtt()
-    with _mqtt_finto(client):
-        assert vl.publish_state(now=0.0) is True
-        assert vl.publish_state(now=0.2) is False
-        assert vl.publish_state(now=0.6) is True
-    assert len(client.pubblicazioni) == 2
-
-
-def test_senza_broker_il_volo_prosegue():
-    vl = _vision_loop()
-    with _mqtt_finto(None):
-        assert vl.publish_state(now=0.0) is False
+def test_l_avvio_del_collegamento_crea_il_client_mqtt():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    chiamate = []
+    originale = modulo._mqtt_client
+    modulo._mqtt_client = lambda: chiamate.append("client")
+    try:
+        modulo.start_mqtt_client()
+    finally:
+        modulo._mqtt_client = originale
+    assert chiamate == ["client"]
 
 
 def test_un_errore_di_pubblicazione_non_interrompe_il_volo():
@@ -624,34 +595,7 @@ def test_un_errore_di_pubblicazione_non_interrompe_il_volo():
 
     vl = _vision_loop()
     with _mqtt_finto(_Rotto()):
-        assert vl.publish_state(now=0.0) is False
-
-
-def test_la_telemetria_non_consegnata_non_passa_per_riuscita():
-    vl = _vision_loop()
-    client = _ClientMqtt(rc=4)
-    with _mqtt_finto(client):
-        assert vl.publish_state(now=0.0) is False
-    assert client.pubblicazioni, "il tentativo deve comunque essere stato fatto"
-
-
-def test_il_codice_4_all_avvio_della_connessione_non_e_un_errore(caplog):
-    modulo = sys.modules["drone.perception.vision_loop"]
-    vl = _vision_loop()
-    client = _ClientMqtt(rc=4)
-    originale = modulo._mqtt_avviato_at
-    try:
-        modulo._mqtt_avviato_at = time.monotonic()
-        with _mqtt_finto(client), caplog.at_level(logging.WARNING):
-            assert vl.publish_state(now=0.0) is False
-        assert "non è raggiungibile" not in caplog.text
-
-        modulo._mqtt_avviato_at = time.monotonic() - modulo.MQTT_CONNECT_GRACE_SEC - 1
-        with _mqtt_finto(client), caplog.at_level(logging.WARNING):
-            assert vl.publish_state(now=1.0) is False
-        assert "non è raggiungibile" in caplog.text
-    finally:
-        modulo._mqtt_avviato_at = originale
+        assert vl.publish_alarm(kind="fall", message="Caduta") is False
 
 
 def test_la_batteria_non_leggibile_resta_fuori_dal_log_degli_errori():
@@ -679,7 +623,7 @@ def test_la_batteria_non_leggibile_resta_fuori_dal_log_degli_errori():
     assert all(r.levelno < logging.WARNING for r in registrati)
 
 
-def test_la_telemetria_non_consegnata_finisce_nel_log_degli_errori():
+def test_l_allarme_non_consegnato_finisce_nel_log_degli_errori():
     import logging
 
     logger = logging.getLogger("drone.perception.vision_loop")
@@ -690,7 +634,7 @@ def test_la_telemetria_non_consegnata_finisce_nel_log_degli_errori():
     try:
         vl = _vision_loop()
         with _mqtt_finto(_ClientMqtt(rc=4)):
-            vl.publish_state(now=0.0)
+            vl.publish_alarm(kind="fall", message="Caduta")
     finally:
         logger.removeHandler(raccoglitore)
     assert len(registrati) == 1
@@ -744,6 +688,76 @@ def test_senza_broker_l_allarme_non_blocca_il_volo():
     vl = _vision_loop()
     with _mqtt_finto(None):
         assert vl.publish_alarm(kind="fall", message="Caduta") is False
+
+
+class _MessaggioMqtt:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.payload = payload if isinstance(payload, bytes) else json.dumps(payload).encode("utf-8")
+
+
+@contextlib.contextmanager
+def _alert_catturati():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    originale = modulo.print_event
+    catturati = []
+    modulo.print_event = lambda msg, **kw: catturati.append((msg, kw))
+    try:
+        yield catturati
+    finally:
+        modulo.print_event = originale
+
+
+def test_all_avvio_il_drone_ascolta_gli_orologi():
+    modulo = sys.modules["drone.perception.vision_loop"]
+
+    class _Client(_ClientMqtt):
+        def __init__(self):
+            super().__init__()
+            self.iscrizioni = []
+
+        def subscribe(self, topic, qos=0):
+            self.iscrizioni.append(topic)
+
+    client = _Client()
+    modulo._on_mqtt_connect(client)
+    assert client.iscrizioni == ["cantiere/sensori/orologio/+"]
+
+
+def test_l_allarme_biometrico_dell_orologio_entra_nel_log_degli_alert():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    messaggio = _MessaggioMqtt(
+        "cantiere/sensori/orologio/operaio_1",
+        {"bpm": 131, "spo2": 95, "evento": "BIOMETRIA_ANOMALA"},
+    )
+    with _alert_catturati() as catturati:
+        modulo._on_mqtt_message(None, None, messaggio)
+
+    assert len(catturati) == 1
+    testo, opzioni = catturati[0]
+    assert testo == "operaio_1: 131 bpm, SpO2 95%"
+    assert opzioni["channel"] == "alert"
+
+
+def test_la_telemetria_dell_orologio_non_entra_nel_log_degli_alert():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    telemetria = _MessaggioMqtt(
+        "cantiere/sensori/orologio/operaio_1",
+        {"bpm": 131, "spo2": 95, "stato": "ALLARME", "lettura_valida": True},
+    )
+    with _alert_catturati() as catturati:
+        modulo._on_mqtt_message(None, None, telemetria)
+    assert catturati == []
+
+
+def test_un_messaggio_illeggibile_dell_orologio_viene_ignorato():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    for payload in (b"{non json", b"\xff\xfe", json.dumps([1, 2]).encode("utf-8")):
+        with _alert_catturati() as catturati:
+            modulo._on_mqtt_message(
+                None, None, _MessaggioMqtt("cantiere/sensori/orologio/operaio_1", payload)
+            )
+        assert catturati == []
 
 
 def test_lo_stato_del_joystick_resta_noto_se_la_telemetria_fallisce():

@@ -302,7 +302,6 @@ class AppConfig:
 
     mqtt_broker_ip: str = "127.0.0.1"
     mqtt_broker_port: int = 1883
-    mqtt_publish_interval_sec: float = 0.5
 
     battery_warning_repeat_after_sec: float = 15.0
 

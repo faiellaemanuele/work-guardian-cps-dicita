@@ -141,9 +141,9 @@ bool missioneAttiva = false; // tiene traccia (in RAM) se la missione è in cors
 
 // ---------- Rete e canale MQTT ----------
 // *** DA CONFERMARE: valori placeholder, sostituire con quelli reali ***
-const char* WIFI_SSID   = "iPhone di Michele";
-const char* WIFI_PASS   = "12345678";
-const char* MQTT_BROKER = "172.20.10.2";
+const char* WIFI_SSID   = "WorkGuardian";
+const char* WIFI_PASS   = "WorkGuardian2026";
+const char* MQTT_BROKER = "192.168.1.2";
 const int   MQTT_PORT   = 1883;
 const char* OPERAIO_ID  = "operaio_1";   // *** DA CONFERMARE per ogni dispositivo ***
 
@@ -156,8 +156,14 @@ const char* TOPIC_ALLARMI = "cantiere/allarmi";   // *** DA CONFERMARE: nome del
 
 const unsigned long INTERVALLO_PUBBLICA_MS = 500; // Ogni quanto inviare la telemetria
 const unsigned long RETRY_RETE_MS          = 5000;// Ogni quanto ritentare la connessione se caduta
-unsigned long lastPublishMs   = 0; // due "orologi interni" che ricordano 
+// Tempo concesso a un tentativo WiFi (aggancio al router e assegnazione
+// dell'indirizzo) prima di ricominciarlo: con un router lento un nuovo
+// WiFi.begin() ogni RETRY_RETE_MS interromperebbe ogni tentativo a metà.
+const unsigned long ATTESA_WIFI_MS         = 20000;
+unsigned long lastPublishMs   = 0; // due "orologi interni" che ricordano
 unsigned long lastRetryReteMs = 0; // l'ultima volta che ciascuna delle due cose è successa
+unsigned long inizioTentativoWiFiMs = 0;   // quando è partito l'ultimo WiFi.begin()
+bool          tentativoWiFiAvviato  = false;
 
 // ---------- Cause di allarme (z4) ----------
 // I tre "interruttori" indipendenti che, combinati, decidono se lo stato
@@ -211,7 +217,7 @@ unsigned long causaVibrazioneDa = 0;
 // I limiti che, se superati, fanno scattare la condizione critica 
 
 // soglie "di ingresso" nell'allarme
-const int BPM_MIN_IN  = 50;
+const int BPM_MIN_IN  = 30;
 const int BPM_MAX_IN  = 120;
 const int SPO2_MIN_IN = 92;
 // soglie "di uscita" nell'allarme (più strette: isteresi, evita lo sfarfallio)
@@ -517,11 +523,21 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
 // Viene richiamata periodicamente dal loop() quando la connessione manca.
 void assicuraRete() {
   if (WiFi.status() != WL_CONNECTED) {
+    // Un tentativo ancora nei tempi si lascia concludere: lo stato 0 indica
+    // che l'aggancio al router è riuscito e si attende solo l'indirizzo IP.
+    if (tentativoWiFiAvviato && millis() - inizioTentativoWiFiMs < ATTESA_WIFI_MS) {
+      Serial.print("RETE: collegamento WiFi in corso (stato ");
+      Serial.print(WiFi.status());
+      Serial.println(")");
+      return;
+    }
     Serial.print("RETE: WiFi non connesso (stato ");
     Serial.print(WiFi.status());
     Serial.print("), provo a collegarmi a ");
     Serial.println(WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
+    inizioTentativoWiFiMs = millis();
+    tentativoWiFiAvviato = true;
     return;
   }
   if (!mqtt.connected()) {
@@ -569,6 +585,9 @@ void setup() {
   topicStato    = String("cantiere/sensori/orologio/") + OPERAIO_ID;  // costruisce i nomi dei topic ora che OPERAIO_ID è noto
   topicPresenza = String("cantiere/sistema/orologio_") + OPERAIO_ID + "/status";
   WiFi.mode(WIFI_STA);  // modalità "stazione": si collega a una rete esistente, non ne crea una propria
+  // Il core ESP32 rifiuta di default le reti protette con una sicurezza inferiore
+  // a WPA2, mentre il router del laboratorio offre solo WPA-PSK (TKIP).
+  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);  // registra la funzione da chiamare quando arriva un messaggio
   mqtt.setSocketTimeout(2);  // secondi massimi di attesa su operazioni di rete, per non bloccare troppo a lungo

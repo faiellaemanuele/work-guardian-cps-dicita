@@ -99,7 +99,7 @@ def _emit_surveillance_alert(alert: dict, vision_loop) -> None:
             dettaglio=_watch_detail(alert),
         )
     except Exception:
-        LOGGER.warning("Non è stato possibile inviare al server l'allarme di sorveglianza", exc_info=True)
+        LOGGER.warning("Non è stato possibile inviare al broker l'allarme di sorveglianza", exc_info=True)
 
 
 def handle_person_step(*, person_monitor, vision_loop, pilot_commands) -> None:

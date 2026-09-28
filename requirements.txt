@@ -27,9 +27,8 @@ matplotlib
 openpyxl
 pandas
 
-# Comunicazione MQTT (Brain, simulatori, allarmi dal drone)
+# Comunicazione MQTT (allarmi del drone, eventi dell'orologio)
 paho-mqtt>=1.6
-aiomqtt
 
 # Test del drone (drone/tests)
 pytest

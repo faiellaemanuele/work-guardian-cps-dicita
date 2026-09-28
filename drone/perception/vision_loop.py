@@ -11,7 +11,6 @@ import cv2
 import numpy as np
 
 from drone.config import APP_CONFIG
-from drone.geometry import normalize_position_world
 from drone.hardware.joystick import is_joystick_connected
 from drone.ui.video import overlay
 from drone.ui.console import print_event
@@ -27,51 +26,47 @@ LOGGER = logging.getLogger(__name__)
 
 VIDEO_WINDOW_TITLE = APP_CONFIG.video_window_title
 
-MQTT_TOPIC_DRONE = "cantiere/sensori/drone"
 MQTT_TOPIC_ALARMS = "cantiere/allarmi"
 MQTT_TOPIC_STATUS = "cantiere/sistema/drone/status"
+MQTT_TOPIC_WATCHES = "cantiere/sensori/orologio/+"
+MQTT_WATCH_TOPIC_PREFIX = "cantiere/sensori/orologio/"
+WATCH_BIOMETRIC_EVENT = "BIOMETRIA_ANOMALA"
 MQTT_OFFLINE_WAIT_SEC = 1.0
-# connect_async non aspetta l'handshake: finche' il broker non risponde ogni
-# publish torna "non connesso" (codice 4). Nei primi secondi e' normale.
-MQTT_CONNECT_GRACE_SEC = 5.0
 
 _MQTT_ERR_NO_CONN = 4
 
 _MQTT_NON_CREATO = object()
 _mqtt_singleton = _MQTT_NON_CREATO
-_mqtt_avviato_at: Optional[float] = None
 
 
 def _on_mqtt_connect(client, *_args) -> None:
     try:
         client.publish(MQTT_TOPIC_STATUS, "online", qos=1, retain=True)
-        client.subscribe(MQTT_TOPIC_ALARMS, qos=1)
+        client.subscribe(MQTT_TOPIC_WATCHES)
     except Exception:
-        LOGGER.warning("Non è stato possibile comunicare al server che il drone è in linea", exc_info=True)
+        LOGGER.warning("Non è stato possibile comunicare al broker che il drone è in linea", exc_info=True)
 
 
 def _on_mqtt_message(_client, _userdata, message) -> None:
-    # Solo gli allarmi medici del server: quelli del drone sono gia' nel log,
-    # e "PERICOLO: PERSON" del server duplicherebbe quelli di bordo.
+    # Sul topic dell'orologio passa anche la telemetria continua. Nel Log degli
+    # alert entra solo l'evento che l'orologio pubblica quando va in allarme
+    # biometrico, poiché le soglie e la decisione appartengono al firmware.
+    if not message.topic.startswith(MQTT_WATCH_TOPIC_PREFIX):
+        return
     try:
-        alert = json.loads(message.payload.decode("utf-8"))
+        evento = json.loads(message.payload.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return
-    if not isinstance(alert, dict) or alert.get("type") != "MEDICAL":
+    if not isinstance(evento, dict) or evento.get("evento") != WATCH_BIOMETRIC_EVENT:
         return
-    testo = str(alert.get("msg") or "Allarme medico")
-    print_event(testo, prefix="AVVISO", channel="alert")
-
-
-def _mqtt_in_avvio() -> bool:
-    return (
-        _mqtt_avviato_at is not None
-        and time.monotonic() - _mqtt_avviato_at < MQTT_CONNECT_GRACE_SEC
-    )
+    operaio = message.topic[len(MQTT_WATCH_TOPIC_PREFIX):]
+    bpm = evento.get("bpm")
+    spo2 = evento.get("spo2")
+    print_event(f"{operaio}: {bpm} bpm, SpO2 {spo2}%", prefix="AVVISO", channel="alert")
 
 
 def _mqtt_client():
-    global _mqtt_singleton, _mqtt_avviato_at
+    global _mqtt_singleton
     if _mqtt_singleton is not _MQTT_NON_CREATO:
         return _mqtt_singleton
 
@@ -90,26 +85,31 @@ def _mqtt_client():
         client.connect_async(APP_CONFIG.mqtt_broker_ip, APP_CONFIG.mqtt_broker_port, 30)
         client.loop_start()
         _mqtt_singleton = client
-        _mqtt_avviato_at = time.monotonic()
         LOGGER.info(
-            "Il collegamento al server %s:%s è stato avviato",
+            "Il collegamento al broker %s:%s è stato avviato",
             APP_CONFIG.mqtt_broker_ip,
             APP_CONFIG.mqtt_broker_port,
         )
     except Exception:
         LOGGER.warning(
-            "Non è stato possibile avviare il collegamento al server: il volo prosegue "
+            "Non è stato possibile avviare il collegamento al broker: il volo prosegue "
             "senza inviare dati",
             exc_info=True,
         )
     return _mqtt_singleton
 
 
+def start_mqtt_client() -> None:
+    # Il collegamento si apre prima del volo, e non al primo allarme, affinché
+    # gli eventi dell'orologio arrivino anche quando il drone non ha nulla da
+    # segnalare.
+    _mqtt_client()
+
+
 def stop_mqtt_client() -> None:
-    global _mqtt_singleton, _mqtt_avviato_at
+    global _mqtt_singleton
     client = _mqtt_singleton
     _mqtt_singleton = _MQTT_NON_CREATO
-    _mqtt_avviato_at = None
     if client is None or client is _MQTT_NON_CREATO:
         return
     try:
@@ -121,7 +121,7 @@ def stop_mqtt_client() -> None:
         client.disconnect()
         client.loop_stop()
     except Exception:
-        LOGGER.warning("Il collegamento al server non è stato chiuso correttamente", exc_info=True)
+        LOGGER.warning("Il collegamento al broker non è stato chiuso correttamente", exc_info=True)
 
 
 def _readable_class(raw, labels) -> str:
@@ -157,8 +157,6 @@ class VisionLoop:
         self.last_frame_received_at: Optional[float] = None
 
         self.last_status_refresh_at = 0.0
-
-        self._last_mqtt_publish_at: Optional[float] = None
 
         self.cached_status = {
             "connected": False,
@@ -310,21 +308,6 @@ class VisionLoop:
                     names.add(name)
         return names
 
-    def get_detection_summary(self) -> list[dict]:
-        snapshot = self.get_cached_detections_snapshot()
-        summary: list[dict] = []
-        for entry in snapshot or []:
-            model_name = entry.get("name")
-            for det in entry.get("detections") or []:
-                summary.append(
-                    {
-                        "model": model_name,
-                        "label": det.get("label"),
-                        "confidence": det.get("confidence"),
-                    }
-                )
-        return summary
-
     @staticmethod
     def _publish(client, topic: str, payload: dict, qos: int, errore: str) -> Optional[int]:
         try:
@@ -333,37 +316,6 @@ class VisionLoop:
             LOGGER.warning(errore, exc_info=True)
             return None
         return int(getattr(info, "rc", 0))
-
-    def publish_state(self, *, now: Optional[float] = None) -> bool:
-        now = now if now is not None else time.monotonic()
-        if (
-            self._last_mqtt_publish_at is not None
-            and (now - self._last_mqtt_publish_at) < APP_CONFIG.mqtt_publish_interval_sec
-        ):
-            return False
-
-        client = _mqtt_client()
-        if client is None:
-            return False
-
-        self._last_mqtt_publish_at = now
-        rc = self._publish(
-            client, MQTT_TOPIC_DRONE, self._build_mqtt_payload(), 0,
-            "Non è stato possibile inviare la telemetria al server",
-        )
-        if rc is None:
-            return False
-        if rc != 0:
-            if rc == _MQTT_ERR_NO_CONN and _mqtt_in_avvio():
-                return False
-            self._throttled_warning(
-                "mqtt_publish",
-                f"Il server {APP_CONFIG.mqtt_broker_ip}:{APP_CONFIG.mqtt_broker_port} "
-                "non è raggiungibile: la telemetria non è stata consegnata "
-                f"(codice {rc})",
-            )
-            return False
-        return True
 
     def publish_alarm(
         self,
@@ -388,7 +340,7 @@ class VisionLoop:
             MQTT_TOPIC_ALARMS,
             payload,
             1,
-            "Non è stato possibile inviare l'allarme al server",
+            "Non è stato possibile inviare l'allarme al broker",
         )
         if rc is None:
             return False
@@ -398,45 +350,12 @@ class VisionLoop:
         queued = rc == _MQTT_ERR_NO_CONN
         self._throttled_warning(
             "mqtt_alarm",
-            "Il server non è raggiungibile: l'allarme resta in coda e verrà inviato "
+            "Il broker non è raggiungibile: l'allarme resta in coda e verrà inviato "
             "non appena il collegamento sarà ripristinato"
             if queued
-            else f"L'allarme non è stato inviato al server (codice {rc})",
+            else f"L'allarme non è stato inviato al broker (codice {rc})",
         )
         return queued
-
-    def _build_mqtt_payload(self) -> dict:
-        pose = self.get_latest_pose_estimate()
-        position = None
-        if pose:
-            world = pose.get("position_world")
-            if world is not None:
-                # Il filtro di Kalman restituisce un dict {x, y, z}, lo stimatore
-                # un vettore numpy: normalize_position_world accetta entrambi.
-                try:
-                    valori = normalize_position_world(world).flatten()
-                except ValueError:
-                    LOGGER.debug("Posizione non valida esclusa dalla telemetria: %r", world)
-                else:
-                    position = {
-                        "x": round(float(valori[0]), 3),
-                        "y": round(float(valori[1]), 3),
-                        "z": round(float(valori[2]), 3),
-                        "yaw": round(float(pose.get("yaw_world_deg") or 0.0), 1),
-                    }
-
-        detections = [
-            {"label": det["label"], "conf": det["confidence"]}
-            for det in self.get_detection_summary()
-            if det.get("label") is not None
-        ]
-
-        return {
-            "battery": self.cached_status.get("battery"),
-            "is_flying": bool(self.cached_status.get("flying", False)),
-            "position": position,
-            "detections": detections,
-        }
 
     def get_cached_detections_snapshot(self) -> list:
         with self._detection_lock:

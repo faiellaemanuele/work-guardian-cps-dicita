@@ -92,10 +92,6 @@ class _VisionLoop:
     def clear_autopilot_overlay(self):
         self._registro.passi.append("clear_overlay")
 
-    def publish_state(self):
-        self._registro.passi.append("mqtt_publish")
-        return True
-
 
 class _Dashboard:
     def __init__(self, registro):
@@ -134,6 +130,7 @@ _PATCH = (
     "ensure_utf8_console",
     "configure_logging",
     "run_startup",
+    "start_mqtt_client",
     "arm_mission",
     "release_mission",
     "setup_video_window",
@@ -223,6 +220,7 @@ class _Banco:
         flight_loop.ensure_utf8_console = lambda: None
         flight_loop.configure_logging = lambda: None
         flight_loop.run_startup = self._run_startup
+        flight_loop.start_mqtt_client = lambda: self.registro.passi.append("mqtt_avvio")
         flight_loop.arm_mission = self._arm_mission
         flight_loop.release_mission = self._release_mission
         flight_loop.setup_video_window = lambda dashboard: self.registro.passi.append("finestra")
@@ -524,16 +522,18 @@ def test_la_sorveglianza_gira_anche_in_autonomia():
     assert "dpi" in registro.passi
 
 
-def test_la_telemetria_mqtt_si_pubblica_a_ogni_giro():
-    registro = _Banco(giri=2).esegui()
+def test_il_collegamento_mqtt_si_apre_una_volta_prima_delle_missioni():
+    registro = _Banco(scenari=2).esegui()
 
-    assert registro.passi.count("mqtt_publish") == 2
+    assert registro.passi.count("mqtt_avvio") == 1
+    assert registro.passi.index("startup") < registro.passi.index("mqtt_avvio")
+    assert registro.passi.index("mqtt_avvio") < registro.passi.index("armamento")
 
 
-def test_la_telemetria_mqtt_parte_dopo_la_sorveglianza():
-    registro = _Banco().esegui()
+def test_l_avvio_annullato_non_apre_il_collegamento_mqtt():
+    registro = _Banco(startup_ok=False).esegui()
 
-    assert registro.passi.index("persone") < registro.passi.index("mqtt_publish")
+    assert "mqtt_avvio" not in registro.passi
 
 
 def test_la_finestra_pygame_si_aggiorna_a_ogni_giro():

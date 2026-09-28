@@ -12,6 +12,7 @@ from drone.flight.steps import handle_autonomy_step, handle_dpi_step, handle_per
 from drone.config.logging_setup import ensure_utf8_console, configure_logging
 from drone.flight.postflight import release_mission, run_postflight
 from drone.flight.preflight import Subsystems, arm_mission, run_startup
+from drone.perception.vision_loop import start_mqtt_client
 from drone.ui.console import (
     print_event,
     mark_runtime_started,
@@ -35,6 +36,8 @@ def main():
     try:
         if not run_startup(subsystems, original_stdout):
             return
+
+        start_mqtt_client()
 
         while True:
             if not arm_mission(subsystems):
@@ -167,8 +170,6 @@ def run_flight(subsystems: Subsystems) -> bool:
                 LOGGER.warning("L'atterraggio dopo il rientro alla home non è riuscito", exc_info=True)
             running = False
             continue
-
-        vision_loop.publish_state()
 
         if screen is not None:
             screen.fill((30, 30, 30))
