@@ -141,9 +141,10 @@ bool missioneAttiva = false; // tiene traccia (in RAM) se la missione è in cors
 
 // ---------- Rete e canale MQTT ----------
 // *** DA CONFERMARE: valori placeholder, sostituire con quelli reali ***
-const char* WIFI_SSID   = "WorkGuardian";
-const char* WIFI_PASS   = "WorkGuardian2026";
-const char* MQTT_BROKER = "192.168.1.2";
+// ---------- Rete e canale MQTT ----------
+#include "config_rete.h"
+const int   MQTT_PORT   = 1883;
+const char* OPERAIO_ID  = "operaio_1";   // *** DA CONFERMARE per ogni dispositivo ***
 const int   MQTT_PORT   = 1883;
 const char* OPERAIO_ID  = "operaio_1";   // *** DA CONFERMARE per ogni dispositivo ***
 
