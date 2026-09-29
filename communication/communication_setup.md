@@ -43,6 +43,8 @@ Ignorare la procedura guidata "Connection Type".
 
 5. Per caricare il firmware (`wearable/smartwatch/smartwatch.ino`): nell'Arduino IDE installare **Arduino ESP32 Boards** (di Arduino) e scegliere la scheda *Arduino ESP32 Boards → Arduino Nano ESP32*.
 
+6. Dal Library Manager dell'Arduino IDE installare **MAX30100_milan** (derivata da MAX30100lib) e **PubSubClient** (di Nick O'Leary). Le altre librerie del firmware (`Wire`, `WiFi`, `Preferences`, `LiquidCrystal`) sono già fornite dalla scheda e dall'IDE.
+
 ## 3. Avvio (ogni volta)
 
 1. Accendere il router. Verificare con `ipconfig` che la scheda Ethernet abbia `192.168.1.2`.

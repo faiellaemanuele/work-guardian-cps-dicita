@@ -98,8 +98,8 @@
 //   batteria): tutti e tre, per l'orologio, valgono come fine missione.
 //
 // Telemetria per Serial Plotter (Strumenti -> Plotter seriale, 115200)
-// Librerie: MAX30100lib (oxullo), PubSubClient (knolleary), Preferences
-// (inclusa nel core ESP32 di Arduino)
+// Librerie: MAX30100_milan (gabriel-milan, derivata da MAX30100lib),
+// PubSubClient (knolleary), Preferences (inclusa nel core ESP32 di Arduino)
 
 #include <Wire.h> //il protocollo del sensore
 #include <LiquidCrystal.h> //per comunicare con LCD

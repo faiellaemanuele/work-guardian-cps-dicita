@@ -1,34 +1,20 @@
-# Serve Python 3.10 o superiore.
-#
-# Le dipendenze si installano dalla radice, con un comando solo:
+# Le dipendenze del progetto si installano con il comando seguente, da eseguire
+# nella cartella che contiene questo file:
 #
 #     pip install -r requirements.txt
-#
-# Per addestrare i modelli su GPU, torch e torchvision vanno installati prima
-# nella versione CUDA indicata su pytorch.org; pip non li sostituisce.
-# Il broker MQTT (Mosquitto) si installa a parte, non da pip.
 
-# Drone: volo, pilotaggio e interfaccia
 djitellopy
 pygame-ce
 opencv-contrib-python
 pyapriltags
 numpy
 Pillow
-
-# Visione: rilevamento, addestramento e preparazione dei dataset
-ultralytics
+ultralytics>=8.4.30
 torch
 torchvision
 supervision>=0.30
-
-# Report e grafici di volo
+pandas
 matplotlib
 openpyxl
-pandas
-
-# Comunicazione MQTT (allarmi del drone, eventi dell'orologio)
 paho-mqtt>=1.6
-
-# Test del drone (drone/tests)
 pytest

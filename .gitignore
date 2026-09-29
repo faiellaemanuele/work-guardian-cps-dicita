@@ -1,20 +1,26 @@
-# Bytecode e cache di Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Cache degli strumenti di test e analisi
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
-# Ambienti virtuali
 .venv/
 venv/
 env/
 
-# Output generato dalle sessioni di volo (ricreato a ogni volo)
 drone/flight_sessions/
 
-# Grafici biometrici degli orologi (ricreati a ogni sessione)
 wearable/biometric_sessions/
+
+vision/training/trainer/datasets/*
+!vision/training/trainer/datasets/data.yaml.esempio
+vision/training/dataset_prep/*/dataset/
+vision/training/dataset_prep/*/converted/
+vision/training/dataset_prep/*/split/
+vision/training/dataset_prep/*/dataset_rinumerato/
+
+vision/training/trainer/models/
+
+yolo*.pt
