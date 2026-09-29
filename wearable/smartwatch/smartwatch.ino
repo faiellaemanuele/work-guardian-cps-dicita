@@ -356,6 +356,16 @@ const char* nomeStato() {
   }
 }
 
+// Scrive in 'dest' il valore con un decimale, oppure "null" se la lettura non
+// c'e': cosi' il CC distingue un buco nei dati da un valore davvero zero.
+void formattaValore(char* dest, size_t dim, bool presente, float valore) {
+  if (presente) {
+    snprintf(dest, dim, "%.1f", valore);
+  } else {
+    snprintf(dest, dim, "null");
+  }
+}
+
 // Costruisce un messaggio JSON con i valori correnti (bpm, spo2, stato) e
 // lo invia al CC sul topic personale di questo operatore. Chiamata
 // periodicamente dal loop(), non solo quando c'è un allarme: è la
@@ -363,16 +373,34 @@ const char* nomeStato() {
 // in ogni momento. Se la lettura non è ancora valida, bpm/spo2 vengono
 // inviati come "null" invece di 0, per non far credere al CC che i valori
 // siano davvero zero.
+// Porta anche i valori grezzi e filtrati con un decimale (hr_grezzo,
+// hr_filtrato, spo2_grezzo, spo2_filtrato): il CC li registra e a fine
+// sessione ne disegna i grafici di confronto. Un valore che non c'e' (catena
+// non agganciata, nessun battito recente, dito assente) viaggia come null.
 void pubblicaStato() {
-  char payload[160];  // buffer di testo dove costruiamo il JSON prima di inviarlo
+  char hrG[12], hrF[12], spo2G[12], spo2F[12];
+  bool battitoRecente = (millis() - ultimoBattitoMs <= HR_TIMEOUT_MS);
+  formattaValore(hrG,   sizeof(hrG),   hrGrezzo > 0 && battitoRecente, hrGrezzo);
+  formattaValore(hrF,   sizeof(hrF),   hrPronto,                       hrFiltrato);
+  formattaValore(spo2G, sizeof(spo2G), spo2Grezzo > 0,                 spo2Grezzo);
+  formattaValore(spo2F, sizeof(spo2F), spo2Pronto,                     spo2Filtrato);
+
+  char grezziFiltrati[112];
+  snprintf(grezziFiltrati, sizeof(grezziFiltrati),
+           "\"hr_grezzo\":%s,\"hr_filtrato\":%s,\"spo2_grezzo\":%s,\"spo2_filtrato\":%s",
+           hrG, hrF, spo2G, spo2F);
+
+  // Il messaggio piu' lungo sta sotto i 200 caratteri: insieme al topic resta
+  // entro i 256 byte di pacchetto che PubSubClient accetta di default.
+  char payload[224];  // buffer di testo dove costruiamo il JSON prima di inviarlo
   if (letturaValida) {
     snprintf(payload, sizeof(payload),  // compone la stringa in modo sicuro, senza sforare la dimensione del buffer
-             "{\"bpm\":%d,\"spo2\":%d,\"stato\":\"%s\",\"lettura_valida\":true}",
-             bpm, spo2, nomeStato());
+             "{\"bpm\":%d,\"spo2\":%d,\"stato\":\"%s\",\"lettura_valida\":true,%s}",
+             bpm, spo2, nomeStato(), grezziFiltrati);
   } else {
     snprintf(payload, sizeof(payload),
-             "{\"bpm\":null,\"spo2\":null,\"stato\":\"%s\",\"lettura_valida\":false}",
-             nomeStato());
+             "{\"bpm\":null,\"spo2\":null,\"stato\":\"%s\",\"lettura_valida\":false,%s}",
+             nomeStato(), grezziFiltrati);
   }
   mqtt.publish(topicStato.c_str(), payload);  // invio effettivo del messaggio sul topic
 }

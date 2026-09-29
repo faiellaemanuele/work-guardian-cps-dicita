@@ -230,6 +230,20 @@ class AprilTagAutopilotConfig:
 
 
 @dataclass(frozen=True)
+class SmartwatchThresholdsConfig:
+    # Copia delle soglie del firmware (BPM_*_IN/OUT e SPO2_MIN_* in
+    # wearable/smartwatch/smartwatch.ino): l'allarme lo decide l'orologio, qui
+    # servono solo a disegnarle nei grafici biometrici. Se cambiano lì, vanno
+    # cambiate anche qui.
+    bpm_min_in: int = 30
+    bpm_max_in: int = 120
+    spo2_min_in: int = 92
+    bpm_min_out: int = 55
+    bpm_max_out: int = 115
+    spo2_min_out: int = 94
+
+
+@dataclass(frozen=True)
 class AppConfig:
     tello_host: str | None = None
     loop_hz: int = 20
@@ -279,6 +293,7 @@ class AppConfig:
     flight_log_max_samples: int | None = 25_000
 
     flight_sessions_dir: Path = PACKAGE_DIR / "flight_sessions"
+    biometric_sessions_dir: Path = BASE_DIR / "wearable" / "biometric_sessions"
     waypoint_paths_dir: Path = PACKAGE_DIR / "waypoint_paths"
 
     yolo_models: tuple[YoloModelConfig, ...] = field(
@@ -302,6 +317,9 @@ class AppConfig:
 
     mqtt_broker_ip: str = "127.0.0.1"
     mqtt_broker_port: int = 1883
+    smartwatch_thresholds: SmartwatchThresholdsConfig = field(
+        default_factory=SmartwatchThresholdsConfig
+    )
 
     battery_warning_repeat_after_sec: float = 15.0
 

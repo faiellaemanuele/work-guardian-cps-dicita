@@ -585,7 +585,68 @@ def test_l_avvio_del_collegamento_crea_il_client_mqtt():
         modulo.start_mqtt_client()
     finally:
         modulo._mqtt_client = originale
+        modulo.take_biometric_logger()
     assert chiamate == ["client"]
+
+
+@contextlib.contextmanager
+def _sessione_biometrica():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    originale = modulo._mqtt_client
+    modulo._mqtt_client = lambda: None
+    try:
+        modulo.start_mqtt_client()
+    finally:
+        modulo._mqtt_client = originale
+    try:
+        yield modulo
+    finally:
+        modulo.take_biometric_logger()
+
+
+def test_la_telemetria_dell_orologio_finisce_nella_sessione_biometrica():
+    with _sessione_biometrica() as modulo:
+        telemetria = _MessaggioMqtt(
+            "cantiere/sensori/orologio/operaio_1",
+            {"bpm": 78, "spo2": 97, "stato": "NORMALE", "lettura_valida": True,
+             "hr_grezzo": 81.5, "hr_filtrato": 78.2,
+             "spo2_grezzo": 96.0, "spo2_filtrato": 97.3},
+        )
+        evento = _MessaggioMqtt(
+            "cantiere/sensori/orologio/operaio_1",
+            {"bpm": 131, "spo2": 95, "evento": "BIOMETRIA_ANOMALA"},
+        )
+        with _alert_catturati():
+            modulo._on_mqtt_message(None, None, telemetria)
+            modulo._on_mqtt_message(None, None, evento)
+        log = modulo.take_biometric_logger()
+
+    assert log is not None
+    campioni = log.samples("operaio_1")
+    assert len(campioni) == 1
+    assert campioni[0]["hr_grezzo"] == 81.5
+    assert len(log.events("operaio_1")) == 1
+
+
+def test_la_sessione_biometrica_si_consegna_una_volta_sola():
+    with _sessione_biometrica() as modulo:
+        primo = modulo.take_biometric_logger()
+        secondo = modulo.take_biometric_logger()
+    assert primo is not None
+    assert secondo is None
+
+
+def test_senza_sessione_aperta_la_telemetria_non_si_registra_e_non_rompe():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    modulo.take_biometric_logger()
+    telemetria = _MessaggioMqtt(
+        "cantiere/sensori/orologio/operaio_1",
+        {"bpm": 78, "spo2": 97, "stato": "NORMALE", "lettura_valida": True},
+    )
+    with _alert_catturati() as catturati:
+        modulo._on_mqtt_message(None, None, telemetria)
+    assert catturati == []
+    assert modulo.take_biometric_logger() is None
 
 
 def test_un_errore_di_pubblicazione_non_interrompe_il_volo():

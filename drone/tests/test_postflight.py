@@ -78,17 +78,40 @@ class _Logger:
         return "riassunto"
 
 
-def _esegui(subsystems) -> _Registro:
+class _BiometricLogger:
+    def __init__(self, registro, *, dati=True):
+        self._registro = registro
+        self._dati = dati
+
+    def has_data(self):
+        return self._dati
+
+    def export_session(self, output_root):
+        self._registro.passi.append("export_biometrico")
+        return None
+
+    def get_summary(self):
+        return "riassunto orologi"
+
+
+def _esegui(subsystems, biometric_logger=None) -> _Registro:
     registro = subsystems._registro
-    originali = (postflight.cv2, postflight.pygame, postflight.close_joystick)
+    originali = (
+        postflight.cv2, postflight.pygame, postflight.close_joystick,
+        postflight.take_biometric_logger,
+    )
     stdout_originale = sys.stdout
     postflight.cv2 = type("_Cv2", (), {"destroyAllWindows": staticmethod(lambda: None)})
     postflight.pygame = type("_Pygame", (), {"quit": staticmethod(lambda: None)})
     postflight.close_joystick = lambda: None
+    postflight.take_biometric_logger = lambda: biometric_logger
     try:
         run_postflight(subsystems, io.StringIO())
     finally:
-        postflight.cv2, postflight.pygame, postflight.close_joystick = originali
+        (
+            postflight.cv2, postflight.pygame, postflight.close_joystick,
+            postflight.take_biometric_logger,
+        ) = originali
         sys.stdout = stdout_originale
     return registro
 
@@ -177,6 +200,30 @@ def test_un_atterraggio_del_pilota_chiude_senza_salvare():
 
     assert "export" not in registro.passi
     assert "end" in registro.passi
+
+
+def test_i_dati_degli_orologi_si_salvano_a_fine_sessione():
+    s = _subsystems(dati=True)
+    registro = _esegui(s, _BiometricLogger(s._registro))
+
+    passi = registro.passi
+    assert "export_biometrico" in passi
+    assert passi.index("land") < passi.index("export_biometrico")
+
+
+def test_i_dati_degli_orologi_si_salvano_anche_se_il_pilota_scarta_il_volo():
+    s = _subsystems(dati=True, atterrato_dal_pilota=True, flying=False)
+    registro = _esegui(s, _BiometricLogger(s._registro))
+
+    assert "export" not in registro.passi
+    assert "export_biometrico" in registro.passi
+
+
+def test_senza_dati_degli_orologi_non_si_crea_la_sessione_biometrica():
+    s = _subsystems()
+    registro = _esegui(s, _BiometricLogger(s._registro, dati=False))
+
+    assert "export_biometrico" not in registro.passi
 
 
 def test_il_rilascio_ferma_il_riconoscimento_e_azzera_i_comandi():

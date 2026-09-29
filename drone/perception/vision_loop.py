@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from drone.config import APP_CONFIG
+from drone.data.biometric_data_logger import BIOMETRIC_ALARM_EVENT, BiometricDataLogger
 from drone.hardware.joystick import is_joystick_connected
 from drone.ui.video import overlay
 from drone.ui.console import print_event
@@ -30,13 +31,17 @@ MQTT_TOPIC_ALARMS = "cantiere/allarmi"
 MQTT_TOPIC_STATUS = "cantiere/sistema/drone/status"
 MQTT_TOPIC_WATCHES = "cantiere/sensori/orologio/+"
 MQTT_WATCH_TOPIC_PREFIX = "cantiere/sensori/orologio/"
-WATCH_BIOMETRIC_EVENT = "BIOMETRIA_ANOMALA"
+WATCH_BIOMETRIC_EVENT = BIOMETRIC_ALARM_EVENT
 MQTT_OFFLINE_WAIT_SEC = 1.0
 
 _MQTT_ERR_NO_CONN = 4
 
 _MQTT_NON_CREATO = object()
 _mqtt_singleton = _MQTT_NON_CREATO
+
+# La sessione biometrica dura quanto il collegamento al broker: si apre con
+# start_mqtt_client e la raccoglie run_postflight con take_biometric_logger.
+_biometric_logger: Optional[BiometricDataLogger] = None
 
 
 def _on_mqtt_connect(client, *_args) -> None:
@@ -48,7 +53,8 @@ def _on_mqtt_connect(client, *_args) -> None:
 
 
 def _on_mqtt_message(_client, _userdata, message) -> None:
-    # Sul topic dell'orologio passa anche la telemetria continua. Nel Log degli
+    # Sul topic dell'orologio passa anche la telemetria continua, che finisce
+    # nella sessione biometrica per i grafici di fine sessione. Nel Log degli
     # alert entra solo l'evento che l'orologio pubblica quando va in allarme
     # biometrico, poiché le soglie e la decisione appartengono al firmware.
     if not message.topic.startswith(MQTT_WATCH_TOPIC_PREFIX):
@@ -57,9 +63,17 @@ def _on_mqtt_message(_client, _userdata, message) -> None:
         evento = json.loads(message.payload.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return
-    if not isinstance(evento, dict) or evento.get("evento") != WATCH_BIOMETRIC_EVENT:
+    if not isinstance(evento, dict):
         return
     operaio = message.topic[len(MQTT_WATCH_TOPIC_PREFIX):]
+    biometric_logger = _biometric_logger
+    if biometric_logger is not None:
+        try:
+            biometric_logger.log_message(operaio, evento)
+        except Exception:
+            LOGGER.warning("Non è stato possibile registrare il messaggio dell'orologio", exc_info=True)
+    if evento.get("evento") != WATCH_BIOMETRIC_EVENT:
+        return
     bpm = evento.get("bpm")
     spo2 = evento.get("spo2")
     print_event(f"{operaio}: {bpm} bpm, SpO2 {spo2}%", prefix="AVVISO", channel="alert")
@@ -103,7 +117,18 @@ def start_mqtt_client() -> None:
     # Il collegamento si apre prima del volo, e non al primo allarme, affinché
     # gli eventi dell'orologio arrivino anche quando il drone non ha nulla da
     # segnalare.
+    global _biometric_logger
+    if _biometric_logger is None:
+        _biometric_logger = BiometricDataLogger()
     _mqtt_client()
+
+
+def take_biometric_logger() -> Optional[BiometricDataLogger]:
+    # Consegna i dati raccolti e ne stacca la registrazione: una chiamata
+    # successiva, o un messaggio arrivato in ritardo, non li tocca più.
+    global _biometric_logger
+    biometric_logger, _biometric_logger = _biometric_logger, None
+    return biometric_logger
 
 
 def stop_mqtt_client() -> None:

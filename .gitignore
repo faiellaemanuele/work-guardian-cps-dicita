@@ -15,3 +15,6 @@ env/
 
 # Output generato dalle sessioni di volo (ricreato a ogni volo)
 drone/flight_sessions/
+
+# Grafici biometrici degli orologi (ricreati a ogni sessione)
+wearable/biometric_sessions/

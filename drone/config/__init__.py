@@ -13,6 +13,7 @@ from drone.config.app_config import (
     JoystickMapping,
     PACKAGE_DIR,
     PoseKalmanFilterConfig,
+    SmartwatchThresholdsConfig,
     YoloModelConfig,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "JoystickMapping",
     "PACKAGE_DIR",
     "PoseKalmanFilterConfig",
+    "SmartwatchThresholdsConfig",
     "YoloModelConfig",
 ]

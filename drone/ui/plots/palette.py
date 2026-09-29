@@ -35,4 +35,13 @@ PALETTE = {
     "serie_verde":   "#2ca02c",
     "serie_viola":   "#9467bd",
     "serie_rosso":   "#d62728",
+
+    "stato_non_avviata": "#e5e5e5",
+    "stato_ricerca":     "#c7c7c7",
+    "stato_normale":     "#2ca02c",
+    "stato_verifica":    "#e8820c",
+    "stato_allarme":     "#d62728",
+    "stato_silenziato":  "#17becf",
+    "stato_guasto":      "#8c564b",
+    "allarme_biometrico": "#d62728",
 }

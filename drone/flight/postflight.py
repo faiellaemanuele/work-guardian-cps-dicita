@@ -10,7 +10,7 @@ import pygame
 from drone.config import APP_CONFIG, BASE_DIR
 from drone.hardware.joystick import close_joystick
 from drone.flight.preflight import Subsystems
-from drone.perception.vision_loop import stop_mqtt_client
+from drone.perception.vision_loop import stop_mqtt_client, take_biometric_logger
 from drone.ui.console import log_phase, mark_runtime_stopped, print_step, set_alert_sink
 
 LOGGER = logging.getLogger(__name__)
@@ -26,6 +26,27 @@ def _project_relative(path) -> str:
 def _landed_by_pilot(subsystems: Subsystems) -> bool:
     pilot_commands = subsystems.pilot_commands
     return pilot_commands is not None and pilot_commands.landed_by_pilot()
+
+
+def _export_biometric_session(biometric_logger) -> None:
+    try:
+        session_dir = biometric_logger.export_session(APP_CONFIG.biometric_sessions_dir)
+        if session_dir is not None:
+            print_step(
+                "OK",
+                "I grafici biometrici sono stati salvati nella cartella "
+                f"{_project_relative(session_dir)}",
+            )
+        else:
+            print_step(
+                "!!",
+                "Non è stato possibile creare la cartella della sessione biometrica: "
+                "i grafici degli orologi non sono stati salvati",
+            )
+        for riga in biometric_logger.get_summary().splitlines():
+            print_step("--", riga)
+    except Exception:
+        LOGGER.exception("Non è stato possibile salvare i dati degli orologi")
 
 
 def release_mission(subsystems: Subsystems) -> None:
@@ -88,6 +109,7 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
             LOGGER.warning("Il riconoscimento degli oggetti non è stato fermato correttamente", exc_info=True)
 
     stop_mqtt_client()
+    biometric_logger = take_biometric_logger()
 
     if controller is not None:
         try:
@@ -95,7 +117,8 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
         except Exception:
             pass
 
-    if flight_data_logger is not None:
+    has_biometric_data = biometric_logger is not None and biometric_logger.has_data()
+    if flight_data_logger is not None or has_biometric_data:
         log_phase("Chiusura della sessione")
 
     if flight_data_logger is not None and _landed_by_pilot(subsystems):
@@ -135,6 +158,11 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
                 )
         except Exception:
             LOGGER.exception("Non è stato possibile salvare i dati del volo")
+
+    # I dati degli orologi riguardano la salute degli operai, non il volo: si
+    # salvano anche quando il pilota scarta i dati del volo atterrando a mano.
+    if has_biometric_data:
+        _export_biometric_session(biometric_logger)
 
     if dashboard is not None:
         try:
