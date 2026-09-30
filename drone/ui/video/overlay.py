@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from drone.config import APP_CONFIG
 from drone.ui import fonts
 from drone.ui.shapes import glow_box, paint_supersampled
 
@@ -121,6 +122,27 @@ def _pi_pin(draw, cx, cy, s, color):
     draw.ellipse((cx - r2, hcy - r2, cx + r2, hcy + r2), fill=color)
 
 
+def _pi_heart(draw, cx, cy, s, color):
+    r = 3.0 * s
+    for dx in (-2.9, 2.9):
+        ex, ey = cx + dx * s, cy - 1.6 * s
+        draw.ellipse((ex - r, ey - r, ex + r, ey + r), fill=color)
+    draw.polygon(
+        [(cx - 5.8 * s, cy - 0.9 * s), (cx + 5.8 * s, cy - 0.9 * s), (cx, cy + 6.2 * s)],
+        fill=color,
+    )
+
+
+def _pi_drop(draw, cx, cy, s, color):
+    r = 4.2 * s
+    by = cy + 2.0 * s
+    draw.ellipse((cx - r, by - r, cx + r, by + r), fill=color)
+    draw.polygon(
+        [(cx - 3.7 * s, by - 2.0 * s), (cx + 3.7 * s, by - 2.0 * s), (cx, cy - 7.0 * s)],
+        fill=color,
+    )
+
+
 def _pi_battery_gauge(draw, x, cy, w_base, pct, s):
     h = 13 * s
     y1 = cy - h / 2
@@ -174,6 +196,15 @@ WATCH_PANEL_TITLE = "Stato orologio"
 
 _PANEL_LABELS = ("Connessione", "Controller", "Volo", "Supervisione", "Autopilota")
 _WATCH_LABELS = ("Connessione",)
+# I valori piu' larghi che l'orologio puo' mostrare: il pannello non deve
+# cambiare larghezza quando il battito passa a tre cifre.
+_WATCH_VITALS_WIDEST = ("220 bpm", "SpO2 100%")
+
+
+def _vitals_row_width() -> int:
+    font = fonts.sans(_PANEL_LABEL_PX)
+    widest = max(int(round(font.getlength(text))) for text in _WATCH_VITALS_WIDEST)
+    return _PANEL_PX + _PANEL_ICON_W + _PANEL_GAP + widest + _PANEL_PX
 
 
 def _panel_base_width(labels: tuple[str, ...], title: str, batt_text: str) -> int:
@@ -191,13 +222,15 @@ def _panels_base_width(batt_text: str = "100%") -> int:
     return max(
         _panel_base_width(_PANEL_LABELS, DRONE_PANEL_TITLE, batt_text),
         _panel_base_width(_WATCH_LABELS, WATCH_PANEL_TITLE, batt_text),
+        _vitals_row_width(),
     )
 
 
-def _panel_base_height(rows: int) -> int:
+def _panel_base_height(rows: int, bottom_rows: int) -> int:
     return (
         _PANEL_PAD_TOP + _PANEL_TITLE_H + _PANEL_TITLE_GAP
-        + rows * _PANEL_ROW_H + _PANEL_SEP_GAP + _PANEL_ROW_H + _PANEL_PAD_BOTTOM
+        + rows * _PANEL_ROW_H + _PANEL_SEP_GAP + bottom_rows * _PANEL_ROW_H
+        + _PANEL_PAD_BOTTOM
     )
 
 
@@ -225,6 +258,68 @@ _PANEL_ICONS = (_pi_wifi, _pi_gamepad, _pi_drone, _pi_eye, _pi_pin)
 _WATCH_ICONS = (_pi_wifi,)
 
 
+def _paint_row_icon(img, draw_icon, px, cy, color):
+    ss = _PANEL_SUPERSAMPLE
+    icon_cx = (px + _PANEL_ICON_W / 2) * ss
+    s = ss * _PANEL_ICON_SCALE
+    half = _PANEL_ICON_HALF * s
+    paint_supersampled(
+        img, (icon_cx - half, cy - half, icon_cx + half, cy + half), (icon_cx, cy),
+        lambda d, x, yy, k: draw_icon(d, x, yy, s * k, color),
+    )
+
+
+def _battery_row(batt_v):
+    batt_text = "--" if batt_v is None else f"{int(batt_v)}%"
+
+    def draw_row(img, draw, px, cy):
+        ss = _PANEL_SUPERSAMPLE
+        gauge_half_h = 8 * ss
+        paint_supersampled(
+            img, ((px - 1) * ss, cy - gauge_half_h, (px + _PANEL_GAUGE_W + 1) * ss, cy + gauge_half_h),
+            (px * ss, cy),
+            lambda d, x, yy, k: _pi_battery_gauge(d, x, yy, _PANEL_GAUGE_W, batt_v, ss * k),
+        )
+        draw.text(
+            ((px + _PANEL_GAUGE_W + _PANEL_GAP) * ss, cy),
+            batt_text, font=fonts.sans_bold((_PANEL_LABEL_PX + 1) * ss),
+            fill=_battery_color(batt_v), anchor="lm",
+        )
+
+    return draw_row
+
+
+# Testo come le voci del pannello del drone; l'icona e' verde dentro soglia,
+# rossa fuori e grigia quando l'orologio non ha una lettura.
+def _vital_row(draw_icon, text, value, out_of_range):
+    if value is None:
+        icon_color, text_color = _LABEL_OFF, _LABEL_OFF
+    else:
+        icon_color, text_color = (_STATUS_OFF if out_of_range else _STATUS_ON), _LABEL
+
+    def draw_row(img, draw, px, cy):
+        ss = _PANEL_SUPERSAMPLE
+        _paint_row_icon(img, draw_icon, px, cy, icon_color)
+        draw.text(
+            ((px + _PANEL_ICON_W + _PANEL_GAP) * ss, cy),
+            text, font=fonts.sans(_PANEL_LABEL_PX * ss),
+            fill=text_color, anchor="lm",
+        )
+
+    return draw_row
+
+
+def _vitals_rows(bpm, spo2):
+    # Le soglie sono quelle con cui l'orologio avvia la verifica.
+    thr = APP_CONFIG.smartwatch_thresholds
+    bpm_out = bpm is not None and (bpm < thr.bpm_min_in or bpm > thr.bpm_max_in)
+    spo2_out = spo2 is not None and spo2 < thr.spo2_min_in
+    return [
+        _vital_row(_pi_heart, "-- bpm" if bpm is None else f"{bpm} bpm", bpm, bpm_out),
+        _vital_row(_pi_drop, "SpO2 --" if spo2 is None else f"SpO2 {spo2}%", spo2, spo2_out),
+    ]
+
+
 def _status_rows(connected, joystick, flying, detection_enabled, autonomy_enabled):
     stati = (
         bool(connected), bool(joystick), bool(flying),
@@ -243,21 +338,21 @@ def _build_status_panel(
     return _build_panel(
         DRONE_PANEL_TITLE,
         _status_rows(connected, joystick, flying, detection_enabled, autonomy_enabled),
-        batt_v,
+        [_battery_row(batt_v)],
     )
 
 
-def _build_watch_panel(connected, batt_v):
-    return _build_panel(WATCH_PANEL_TITLE, _watch_rows(connected), batt_v)
+def _build_watch_panel(connected, bpm, spo2):
+    return _build_panel(WATCH_PANEL_TITLE, _watch_rows(connected), _vitals_rows(bpm, spo2))
 
 
-def _build_panel(title, status_rows, batt_v):
-    batt_text = "--" if batt_v is None else f"{int(batt_v)}%"
-
+# Le righe sotto il separatore (bottom_rows) sono funzioni che disegnano la
+# propria riga: la batteria per il drone, battito e saturazione per l'orologio.
+def _build_panel(title, status_rows, bottom_rows):
     ss = _PANEL_SUPERSAMPLE
     g = _PANEL_GLOW
     bg_w = _panels_base_width()
-    bg_h = _panel_base_height(len(status_rows))
+    bg_h = _panel_base_height(len(status_rows), len(bottom_rows))
 
     img = Image.new("RGBA", ((bg_w + 2 * g) * ss, (bg_h + 2 * g) * ss), (0, 0, 0, 0))
     glow_box(
@@ -269,7 +364,6 @@ def _build_panel(title, status_rows, batt_v):
     font_label = fonts.sans(_PANEL_LABEL_PX * ss)
 
     px = g + _PANEL_PX
-    icon_cx = (px + _PANEL_ICON_W / 2) * ss
     text_x = (px + _PANEL_ICON_W + _PANEL_GAP) * ss
     y = g + _PANEL_PAD_TOP
 
@@ -280,15 +374,9 @@ def _build_panel(title, status_rows, batt_v):
     )
     y += _PANEL_TITLE_H + _PANEL_TITLE_GAP
 
-    s = ss * _PANEL_ICON_SCALE
-    half = _PANEL_ICON_HALF * s
     for label, active, draw_icon in status_rows:
         cy = (y + _PANEL_ROW_H / 2) * ss
-        color = _STATUS_ON if active else _STATUS_OFF
-        paint_supersampled(
-            img, (icon_cx - half, cy - half, icon_cx + half, cy + half), (icon_cx, cy),
-            lambda d, x, yy, k, draw_icon=draw_icon, color=color: draw_icon(d, x, yy, s * k, color),
-        )
+        _paint_row_icon(img, draw_icon, px, cy, _STATUS_ON if active else _STATUS_OFF)
         draw.text((text_x, cy), label, font=font_label,
                   fill=_LABEL if active else _LABEL_OFF, anchor="lm")
         y += _PANEL_ROW_H
@@ -299,18 +387,9 @@ def _build_panel(title, status_rows, batt_v):
         fill=_BATT_SEPARATOR, width=max(1, ss),
     )
     y += _PANEL_SEP_GAP
-    cy = (y + _PANEL_ROW_H / 2) * ss
-    gauge_half_h = 8 * ss
-    paint_supersampled(
-        img, ((px - 1) * ss, cy - gauge_half_h, (px + _PANEL_GAUGE_W + 1) * ss, cy + gauge_half_h),
-        (px * ss, cy),
-        lambda d, x, yy, k: _pi_battery_gauge(d, x, yy, _PANEL_GAUGE_W, batt_v, ss * k),
-    )
-    draw.text(
-        ((px + _PANEL_GAUGE_W + _PANEL_GAP) * ss, cy),
-        batt_text, font=fonts.sans_bold((_PANEL_LABEL_PX + 1) * ss),
-        fill=_battery_color(batt_v), anchor="lm",
-    )
+    for draw_row in bottom_rows:
+        draw_row(img, draw, px, (y + _PANEL_ROW_H / 2) * ss)
+        y += _PANEL_ROW_H
 
     return img.resize(
         (_panel_image_width(), int(round((bg_h + 2 * g) * _STATUS_PANEL_SCALE))),
@@ -409,12 +488,13 @@ def draw_scenario_hint(frame, key_label: str):
 def draw_watch_overlay(frame, watch_status=None):
     watch_status = watch_status or {}
     connected = bool(watch_status.get("connected", False))
-    batt_v = watch_status.get("battery")
+    bpm = watch_status.get("bpm")
+    spo2 = watch_status.get("spo2")
 
-    key = (connected, None if batt_v is None else int(batt_v))
+    key = (connected, bpm, spo2)
     panel = _WATCH_PANEL_CACHE.get(key)
     if panel is None:
-        panel = _build_watch_panel(connected, batt_v)
+        panel = _build_watch_panel(connected, bpm, spo2)
         _WATCH_PANEL_CACHE.clear()
         _WATCH_PANEL_CACHE[key] = panel
 

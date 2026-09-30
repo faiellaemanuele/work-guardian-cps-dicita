@@ -38,7 +38,7 @@ _FILENAMES = {
 _MAX_GAP_SEC = 3.0
 _NOMINAL_STEP_SEC = 0.5
 
-# Stati dell'automa del firmware (nomeStato() in smartwatch.ino), nell'ordine
+# Stati dell'automa del firmware (getStateName() in smartwatch.ino), nell'ordine
 # in cui compaiono in legenda.
 _STATES = (
     ("MISSIONE_NON_AVVIATA", "Missione non avviata", PALETTE["stato_non_avviata"]),

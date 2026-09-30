@@ -12,7 +12,7 @@ from drone.flight.steps import handle_autonomy_step, handle_dpi_step, handle_per
 from drone.config.logging_setup import ensure_utf8_console, configure_logging
 from drone.flight.postflight import release_mission, run_postflight
 from drone.flight.preflight import Subsystems, arm_mission, run_startup
-from drone.perception.vision_loop import start_mqtt_client
+from drone.perception.vision_loop import start_mqtt_client, update_watch_mission
 from drone.ui.console import (
     print_event,
     mark_runtime_started,
@@ -83,6 +83,10 @@ def run_flight(subsystems: Subsystems) -> bool:
 
     running = True
     while running:
+        # La missione dell'orologio segue il volo: il decollo la avvia e
+        # qualunque atterraggio, del pilota, automatico o per batteria, la chiude.
+        update_watch_mission(controller.is_flying)
+
         autonomy_before_step = pilot_commands.is_autonomy_enabled()
         running = pilot_commands.step()
         if not running:
@@ -178,4 +182,6 @@ def run_flight(subsystems: Subsystems) -> bool:
         if clock is not None:
             clock.tick(APP_CONFIG.loop_hz)
 
+    # Gli atterraggi che chiudono il volo escono dal ciclo prima del giro successivo.
+    update_watch_mission(controller.is_flying)
     return pilot_commands.is_scenario_change_requested()

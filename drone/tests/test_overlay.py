@@ -68,9 +68,13 @@ def test_status_overlay_is_compact_no_wide_title_band():
     assert not bool(np.any(f[:220, 260:, :]))
 
 
+def _watch(connected=True, bpm=72, spo2=98):
+    return {"connected": connected, "bpm": bpm, "spo2": spo2}
+
+
 def test_watch_overlay_is_drawn_on_the_right_edge():
     f = _frame()
-    draw_watch_overlay(f, {"connected": False, "battery": None})
+    draw_watch_overlay(f, _watch(connected=False, bpm=None, spo2=None))
     assert bool(np.any(f[:220, overlay.watch_panel_left_edge(f.shape[1]):, :]))
     assert not bool(np.any(f[:220, : overlay.status_panel_right_edge(), :]))
 
@@ -84,9 +88,59 @@ def test_watch_overlay_mirrors_the_drone_panel_margins():
 
 def test_watch_overlay_with_data_does_not_crash():
     f = _frame()
-    draw_watch_overlay(f, {"connected": True, "battery": 64})
+    draw_watch_overlay(f, _watch())
     draw_watch_overlay(f, None)
     assert bool(np.any(f))
+
+
+def test_i_valori_piu_larghi_dell_orologio_restano_nel_pannello():
+    f = _frame()
+    draw_watch_overlay(f, _watch(bpm=220, spo2=100))
+    assert not bool(np.any(f[:220, : overlay.watch_panel_left_edge(f.shape[1]), :]))
+
+
+def test_il_pannello_dell_orologio_si_ridisegna_quando_cambiano_i_valori():
+    overlay._WATCH_PANEL_CACHE.clear()
+    draw_watch_overlay(_frame(), _watch(bpm=72))
+    primo = overlay._WATCH_PANEL_CACHE[(True, 72, 98)]
+    draw_watch_overlay(_frame(), _watch(bpm=72))
+    assert overlay._WATCH_PANEL_CACHE[(True, 72, 98)] is primo
+    draw_watch_overlay(_frame(), _watch(bpm=73))
+    assert list(overlay._WATCH_PANEL_CACHE) == [(True, 73, 98)]
+    overlay._WATCH_PANEL_CACHE.clear()
+
+
+def _pixel_del_colore(frame, rgb):
+    colore = np.array(rgb[::-1], dtype=int)
+    return int((np.abs(frame.astype(int) - colore).sum(axis=2) <= 30).sum())
+
+
+def test_l_icona_del_valore_e_rossa_solo_fuori_soglia():
+    soglie = overlay.APP_CONFIG.smartwatch_thresholds
+    normali, battito_alto, saturazione_bassa = _frame(), _frame(), _frame()
+    draw_watch_overlay(normali, _watch(bpm=72, spo2=98))
+    draw_watch_overlay(battito_alto, _watch(bpm=soglie.bpm_max_in + 1, spo2=98))
+    draw_watch_overlay(saturazione_bassa, _watch(bpm=72, spo2=soglie.spo2_min_in - 1))
+    assert _pixel_del_colore(normali, overlay._STATUS_OFF) == 0
+    assert _pixel_del_colore(battito_alto, overlay._STATUS_OFF) > 20
+    assert _pixel_del_colore(saturazione_bassa, overlay._STATUS_OFF) > 20
+
+
+def test_senza_lettura_le_icone_dei_valori_non_sono_verdi_ne_rosse():
+    normali, senza_lettura = _frame(), _frame()
+    draw_watch_overlay(normali, _watch(bpm=72, spo2=98))
+    draw_watch_overlay(senza_lettura, _watch(bpm=None, spo2=None))
+    assert _pixel_del_colore(senza_lettura, overlay._STATUS_OFF) == 0
+    # Resta verde solo l'icona della connessione.
+    assert (_pixel_del_colore(senza_lettura, overlay._STATUS_ON)
+            < _pixel_del_colore(normali, overlay._STATUS_ON))
+
+
+def test_la_connessione_dell_orologio_cambia_colore():
+    spento, acceso = _frame(), _frame()
+    draw_watch_overlay(spento, _watch(connected=False))
+    draw_watch_overlay(acceso, _watch(connected=True))
+    assert not np.array_equal(spento, acceso)
 
 
 def test_project_title_is_centered_at_the_top():

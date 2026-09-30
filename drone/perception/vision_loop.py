@@ -34,6 +34,12 @@ MQTT_WATCH_TOPIC_PREFIX = "cantiere/sensori/orologio/"
 WATCH_BIOMETRIC_EVENT = BIOMETRIC_ALARM_EVENT
 MQTT_OFFLINE_WAIT_SEC = 1.0
 
+# Valori del campo "tipo" che l'orologio riconosce per l'inizio e la fine della
+# missione (onMqttMessage nel firmware). Per l'orologio la missione coincide
+# con il volo: comincia al decollo e finisce a qualunque atterraggio.
+WATCH_MISSION_STARTED = "AVVIO_MISSIONE"
+WATCH_MISSION_ENDED = "FINE_MISSIONE"
+
 _MQTT_ERR_NO_CONN = 4
 
 _MQTT_NON_CREATO = object()
@@ -43,6 +49,45 @@ _mqtt_singleton = _MQTT_NON_CREATO
 # start_mqtt_client e la raccoglie run_postflight con take_biometric_logger.
 _biometric_logger: Optional[BiometricDataLogger] = None
 
+# Ultimo stato della missione comunicato all'orologio.
+_watch_mission_active = False
+
+# L'orologio pubblica la telemetria ogni 0,5 s: dopo questo silenzio il
+# pannello sul video lo considera scollegato.
+WATCH_TIMEOUT_SEC = 3.0
+
+# Ultima telemetria dell'orologio, per il pannello sul video. La scrive il
+# thread di paho e la legge il ciclo del video: si sostituisce sempre il
+# dizionario intero, cosi' chi legge non ne vede mai uno a meta'.
+_watch_live: Optional[dict] = None
+
+
+def _publish_watch_mission(client, active: bool) -> None:
+    # Il messaggio resta sul broker (retain): un orologio che si collega a volo
+    # già iniziato, o che si ricollega dopo un calo del Wi-Fi, lo riceve subito
+    # invece di restare in attesa dell'avvio.
+    tipo = WATCH_MISSION_STARTED if active else WATCH_MISSION_ENDED
+    try:
+        client.publish(
+            MQTT_TOPIC_ALARMS,
+            json.dumps({"source": "drone", "tipo": tipo}),
+            qos=1,
+            retain=True,
+        )
+    except Exception:
+        LOGGER.warning("Non è stato possibile comunicare all'orologio lo stato della missione", exc_info=True)
+
+
+def update_watch_mission(flying: bool) -> None:
+    # Pubblica solo i cambi di stato: il ciclo di volo la chiama a ogni giro.
+    global _watch_mission_active
+    if flying == _watch_mission_active:
+        return
+    _watch_mission_active = flying
+    client = _mqtt_client()
+    if client is not None:
+        _publish_watch_mission(client, flying)
+
 
 def _on_mqtt_connect(client, *_args) -> None:
     try:
@@ -50,13 +95,19 @@ def _on_mqtt_connect(client, *_args) -> None:
         client.subscribe(MQTT_TOPIC_WATCHES)
     except Exception:
         LOGGER.warning("Non è stato possibile comunicare al broker che il drone è in linea", exc_info=True)
+    # A ogni collegamento, anche dopo una caduta del broker, lo stato della
+    # missione viene ripetuto. Al primo collegamento, a terra, sostituisce un
+    # eventuale avvio rimasto sul broker da una sessione chiusa male.
+    _publish_watch_mission(client, _watch_mission_active)
 
 
 def _on_mqtt_message(_client, _userdata, message) -> None:
     # Sul topic dell'orologio passa anche la telemetria continua, che finisce
-    # nella sessione biometrica per i grafici di fine sessione. Nel Log degli
-    # alert entra solo l'evento che l'orologio pubblica quando va in allarme
-    # biometrico, poiché le soglie e la decisione appartengono al firmware.
+    # nella sessione biometrica per i grafici di fine sessione e nel pannello
+    # sul video. Nel Log degli alert entra solo l'evento che l'orologio
+    # pubblica quando va in allarme biometrico, poiché le soglie e la
+    # decisione appartengono al firmware.
+    global _watch_live
     if not message.topic.startswith(MQTT_WATCH_TOPIC_PREFIX):
         return
     try:
@@ -65,6 +116,12 @@ def _on_mqtt_message(_client, _userdata, message) -> None:
         return
     if not isinstance(evento, dict):
         return
+    if "lettura_valida" in evento:  # telemetria, non l'evento di allarme
+        _watch_live = {
+            "received_at": time.monotonic(),
+            "bpm": evento.get("bpm"),
+            "spo2": evento.get("spo2"),
+        }
     operaio = message.topic[len(MQTT_WATCH_TOPIC_PREFIX):]
     biometric_logger = _biometric_logger
     if biometric_logger is not None:
@@ -77,6 +134,15 @@ def _on_mqtt_message(_client, _userdata, message) -> None:
     bpm = evento.get("bpm")
     spo2 = evento.get("spo2")
     print_event(f"{operaio}: {bpm} bpm, SpO2 {spo2}%", prefix="AVVISO", channel="alert")
+
+
+def get_watch_status() -> dict:
+    # Collegato finché la telemetria continua ad arrivare. Battito e
+    # saturazione valgono None quando l'orologio non ha una lettura valida.
+    live = _watch_live
+    if live is None or time.monotonic() - live["received_at"] > WATCH_TIMEOUT_SEC:
+        return {"connected": False, "bpm": None, "spo2": None}
+    return {"connected": True, "bpm": live["bpm"], "spo2": live["spo2"]}
 
 
 def _mqtt_client():
@@ -132,12 +198,18 @@ def take_biometric_logger() -> Optional[BiometricDataLogger]:
 
 
 def stop_mqtt_client() -> None:
-    global _mqtt_singleton
+    global _mqtt_singleton, _watch_mission_active
     client = _mqtt_singleton
     _mqtt_singleton = _MQTT_NON_CREATO
+    mission_open = _watch_mission_active
+    _watch_mission_active = False
     if client is None or client is _MQTT_NON_CREATO:
         return
     try:
+        # Senza il drone nessuno chiuderebbe più la missione: l'orologio la
+        # considererebbe in corso anche dopo l'atterraggio di chiusura.
+        if mission_open:
+            _publish_watch_mission(client, False)
         info = client.publish(MQTT_TOPIC_STATUS, "offline", qos=1, retain=True)
         try:
             info.wait_for_publish(MQTT_OFFLINE_WAIT_SEC)
@@ -187,11 +259,6 @@ class VisionLoop:
             "connected": False,
             "joystick": False,
             "flying": False,
-            "battery": None,
-        }
-
-        self.watch_status = {
-            "connected": False,
             "battery": None,
         }
 
@@ -593,7 +660,7 @@ class VisionLoop:
                 detection_enabled=detection_is_active,
                 autonomy_enabled=autonomy_enabled,
             )
-            overlay.draw_watch_overlay(display_frame, self.watch_status)
+            overlay.draw_watch_overlay(display_frame, get_watch_status())
             overlay.draw_project_title(display_frame, self.project_title)
 
             self._maybe_draw_safety_net_banner(display_frame)

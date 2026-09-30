@@ -496,10 +496,57 @@ def test_i_tag_visti_arrivano_alla_mappa_del_cruscotto():
     assert cruscotto.tag_visti == {8, 16}
 
 
-def test_lo_stato_dell_orologio_parte_scollegato_e_senza_carica():
-    ciclo = _vision_loop()
+@contextlib.contextmanager
+def _orologio_mai_sentito():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    modulo._watch_live = None
+    try:
+        yield modulo
+    finally:
+        modulo._watch_live = None
 
-    assert ciclo.watch_status == {"connected": False, "battery": None}
+
+def _telemetria_orologio(bpm, spo2, valida=True):
+    return _MessaggioMqtt(
+        "cantiere/sensori/orologio/operaio_1",
+        {"bpm": bpm, "spo2": spo2, "stato": "NORMALE", "lettura_valida": valida},
+    )
+
+
+def test_senza_telemetria_l_orologio_risulta_scollegato():
+    with _orologio_mai_sentito() as modulo:
+        assert modulo.get_watch_status() == {"connected": False, "bpm": None, "spo2": None}
+
+
+def test_la_telemetria_accende_la_connessione_e_porta_i_valori():
+    with _orologio_mai_sentito() as modulo:
+        modulo._on_mqtt_message(None, None, _telemetria_orologio(74, 97))
+        assert modulo.get_watch_status() == {"connected": True, "bpm": 74, "spo2": 97}
+
+
+def test_senza_lettura_valida_l_orologio_e_collegato_ma_senza_valori():
+    with _orologio_mai_sentito() as modulo:
+        modulo._on_mqtt_message(None, None, _telemetria_orologio(None, None, valida=False))
+        assert modulo.get_watch_status() == {"connected": True, "bpm": None, "spo2": None}
+
+
+def test_una_telemetria_troppo_vecchia_vale_come_orologio_scollegato():
+    with _orologio_mai_sentito() as modulo:
+        modulo._on_mqtt_message(None, None, _telemetria_orologio(74, 97))
+        modulo._watch_live["received_at"] -= modulo.WATCH_TIMEOUT_SEC + 1.0
+        assert modulo.get_watch_status() == {"connected": False, "bpm": None, "spo2": None}
+
+
+def test_l_evento_di_allarme_non_sostituisce_la_telemetria():
+    with _orologio_mai_sentito() as modulo:
+        modulo._on_mqtt_message(None, None, _telemetria_orologio(74, 97))
+        evento = _MessaggioMqtt(
+            "cantiere/sensori/orologio/operaio_1",
+            {"bpm": 131, "spo2": 95, "evento": "BIOMETRIA_ANOMALA"},
+        )
+        with _alert_catturati():
+            modulo._on_mqtt_message(None, None, evento)
+        assert modulo.get_watch_status()["bpm"] == 74
 
 
 def test_la_taratura_arriva_tutta_dalla_configurazione():
@@ -557,11 +604,13 @@ class _ClientMqtt:
     def __init__(self, rc=0):
         self.pubblicazioni: list[tuple[str, str]] = []
         self.qos: list[int] = []
+        self.retain: list[bool] = []
         self._rc = rc
 
     def publish(self, topic, payload, qos=0, retain=False):
         self.pubblicazioni.append((topic, payload))
         self.qos.append(qos)
+        self.retain.append(retain)
         return _Esito(self._rc)
 
 
@@ -783,6 +832,125 @@ def test_all_avvio_il_drone_ascolta_gli_orologi():
     client = _Client()
     modulo._on_mqtt_connect(client)
     assert client.iscrizioni == ["cantiere/sensori/orologio/+"]
+
+
+@contextlib.contextmanager
+def _missione_a_terra():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    modulo._watch_mission_active = False
+    try:
+        yield modulo
+    finally:
+        modulo._watch_mission_active = False
+
+
+def _tipi_pubblicati(client) -> list:
+    return [
+        json.loads(carico).get("tipo")
+        for topic, carico in client.pubblicazioni
+        if topic == "cantiere/allarmi"
+    ]
+
+
+def test_il_decollo_avvia_la_missione_dell_orologio():
+    client = _ClientMqtt()
+    with _missione_a_terra() as modulo, _mqtt_finto(client):
+        modulo.update_watch_mission(True)
+
+    assert client.pubblicazioni[0][0] == "cantiere/allarmi"
+    assert _tipi_pubblicati(client) == ["AVVIO_MISSIONE"]
+    assert client.qos == [1]
+    assert client.retain == [True], "un orologio collegato a volo iniziato deve riceverlo"
+
+
+def test_l_atterraggio_chiude_la_missione_dell_orologio():
+    client = _ClientMqtt()
+    with _missione_a_terra() as modulo, _mqtt_finto(client):
+        modulo.update_watch_mission(True)
+        modulo.update_watch_mission(False)
+
+    assert _tipi_pubblicati(client) == ["AVVIO_MISSIONE", "FINE_MISSIONE"]
+
+
+def test_senza_cambi_di_stato_l_orologio_non_riceve_niente():
+    client = _ClientMqtt()
+    with _missione_a_terra() as modulo, _mqtt_finto(client):
+        modulo.update_watch_mission(False)
+        modulo.update_watch_mission(True)
+        modulo.update_watch_mission(True)
+
+    assert _tipi_pubblicati(client) == ["AVVIO_MISSIONE"]
+
+
+def test_senza_broker_la_missione_non_blocca_il_volo():
+    with _missione_a_terra() as modulo, _mqtt_finto(None):
+        modulo.update_watch_mission(True)
+        assert modulo._watch_mission_active is True
+
+
+def test_un_errore_di_pubblicazione_della_missione_non_interrompe_il_volo():
+    class _Rotto:
+        def publish(self, topic, payload, qos=0, retain=False):
+            raise RuntimeError("broker sparito")
+
+    with _missione_a_terra() as modulo, _mqtt_finto(_Rotto()):
+        modulo.update_watch_mission(True)
+
+
+def test_a_ogni_collegamento_il_drone_ripete_lo_stato_della_missione():
+    class _Client(_ClientMqtt):
+        def subscribe(self, topic, qos=0):
+            pass
+
+    a_terra = _Client()
+    in_volo = _Client()
+    with _missione_a_terra() as modulo:
+        modulo._on_mqtt_connect(a_terra)
+        modulo._watch_mission_active = True
+        modulo._on_mqtt_connect(in_volo)
+
+    assert _tipi_pubblicati(a_terra) == ["FINE_MISSIONE"]
+    assert _tipi_pubblicati(in_volo) == ["AVVIO_MISSIONE"]
+    assert a_terra.retain[-1] is True
+
+
+class _ClientDaChiudere(_ClientMqtt):
+    def __init__(self):
+        super().__init__()
+        self.chiuso = False
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        super().publish(topic, payload, qos, retain)
+        return type("_Info", (), {"rc": 0, "wait_for_publish": lambda self, timeout: None})()
+
+    def disconnect(self):
+        self.chiuso = True
+
+    def loop_stop(self):
+        pass
+
+
+def test_la_chiusura_del_collegamento_chiude_la_missione_aperta():
+    client = _ClientDaChiudere()
+    with _missione_a_terra() as modulo:
+        modulo._watch_mission_active = True
+        modulo._mqtt_singleton = client
+        modulo.stop_mqtt_client()
+
+        assert modulo._watch_mission_active is False
+    assert client.pubblicazioni[0][0] == "cantiere/allarmi"
+    assert json.loads(client.pubblicazioni[0][1])["tipo"] == "FINE_MISSIONE"
+    assert client.pubblicazioni[-1] == ("cantiere/sistema/drone/status", "offline")
+    assert client.chiuso is True
+
+
+def test_la_chiusura_a_missione_gia_finita_non_ripete_la_fine():
+    client = _ClientDaChiudere()
+    with _missione_a_terra() as modulo:
+        modulo._mqtt_singleton = client
+        modulo.stop_mqtt_client()
+
+    assert [topic for topic, _ in client.pubblicazioni] == ["cantiere/sistema/drone/status"]
 
 
 def test_l_allarme_biometrico_dell_orologio_entra_nel_log_degli_alert():

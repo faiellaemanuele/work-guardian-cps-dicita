@@ -4,78 +4,70 @@
 Tello  ◄── Wi-Fi ──►  PC (Mosquitto)  ◄── Ethernet ──►  Router  ◄── Wi-Fi ──►  Orologio
 ```
 
+I comandi vanno eseguiti in una finestra di PowerShell aperta come amministratore.
+
 ## 1. Router (solo dopo un reset di fabbrica)
 
-Router 3Com OfficeConnect, pagina `http://192.168.1.1` con il PC collegato via cavo.
-Ignorare la procedura guidata "Connection Type".
-
-1. **Wireless Settings → Configuration**: SSID `WorkGuardian`.
-2. **Wireless Settings → Encryption**: `WPA-PSK (no server)`, password uguale a `WIFI_PASS` del firmware.
+1. Collegare il PC a una porta LAN del router con il cavo Ethernet e aprire nel browser `http://192.168.1.1`. Se compare la procedura guidata Connection Type, ignorarla.
+2. In Wireless Settings → Configuration impostare come nome della rete (SSID) `WorkGuardian`, lo stesso valore di `WIFI_SSID` in `wearable/smartwatch/network_config.h`.
+3. In Wireless Settings → Encryption scegliere `WPA-PSK (no server)` e inserire come password il valore di `WIFI_PASS`, nello stesso file.
 
 ## 2. PC (una volta per ogni computer)
 
-1. Collegare il cavo a una porta **LAN** del router, non WAN.
-
-2. Riservare `192.168.1.2` al PC: in `http://192.168.1.1` → **LAN Settings**, tabella **DHCP Client Lists**.
-   - **Primo PC**: sulla riga del PC con `192.168.1.2` spuntare **Fix** e premere **Apply**.
-   - **Cambio PC** (la riga `192.168.1.2` è già fissa su un altro computer):
-     premere **Edit** su quella riga, inserire il MAC della scheda Ethernet del nuovo PC
-     (colonna `MacAddress` di `Get-NetAdapter`) e premere **Apply**. Poi, in PowerShell
-     come amministratore:
+1. Collegare la scheda Ethernet del PC a una porta LAN del router, non alla porta WAN.
+2. Assegnare al PC l'indirizzo fisso `192.168.1.2` dalla pagina `http://192.168.1.1` → LAN Settings → tabella DHCP Client Lists:
+   - primo PC: spuntare Fix sulla riga con indirizzo `192.168.1.2` e premere Apply;
+   - sostituzione del PC, quando la riga `192.168.1.2` è già fissata su un altro computer: premere Edit su quella riga, sostituire il MAC con quello della scheda Ethernet del nuovo PC e premere Apply. Il MAC si legge con `Get-NetAdapter`, colonna `MacAddress`. Poi rinnovare l'indirizzo del nuovo PC:
      ```powershell
      ipconfig /release
      ipconfig /renew
      ```
-   - Verificare con `ipconfig` che la scheda Ethernet abbia `192.168.1.2`.
 
-3. Configurare il firewall, in PowerShell come amministratore:
+   In entrambi i casi `ipconfig` deve mostrare `192.168.1.2` sulla scheda Ethernet.
+3. Aprire nel firewall di Windows le porte del broker (1883) e del Tello (8890 e 11111):
    ```powershell
    New-NetFirewallRule -DisplayName "WorkGuardian - Mosquitto" -Direction Inbound -Protocol TCP -LocalPort 1883 -RemoteAddress 192.168.1.0/24 -Action Allow
    New-NetFirewallRule -DisplayName "WorkGuardian - Tello" -Direction Inbound -Protocol UDP -LocalPort 8890,11111 -RemoteAddress 192.168.10.1 -Action Allow
    Set-NetFirewallProfile -Profile Public,Private -Enabled True
    ```
-   Se Windows chiede l'accesso di rete per Mosquitto: spuntare **Reti private** e **Reti pubbliche**, poi **Consenti accesso**. Non premere Annulla.
-
-4. Installare Mosquitto in `C:\Program Files\Mosquitto` e passare il servizio ad avvio manuale, in PowerShell come amministratore:
+4. Installare Mosquitto nella cartella `C:\Program Files\Mosquitto` e impostare ad avvio manuale il servizio creato dall'installazione:
    ```powershell
    Set-Service mosquitto -StartupType Manual
    ```
-
-5. Per caricare il firmware (`wearable/smartwatch/smartwatch.ino`): nell'Arduino IDE installare **Arduino ESP32 Boards** (di Arduino) e scegliere la scheda *Arduino ESP32 Boards → Arduino Nano ESP32*.
-
-6. Dal Library Manager dell'Arduino IDE installare **MAX30100_milan** (derivata da MAX30100lib) e **PubSubClient** (di Nick O'Leary). Le altre librerie del firmware (`Wire`, `WiFi`, `Preferences`, `LiquidCrystal`) sono già fornite dalla scheda e dall'IDE.
+5. Preparare l'Arduino IDE e caricare il firmware sull'orologio:
+   - da Boards Manager installare Arduino ESP32 Boards (di Arduino);
+   - da Library Manager installare MAX30100_milan e PubSubClient (di Nick O'Leary);
+   - in Tools → Board scegliere Arduino ESP32 Boards → Arduino Nano ESP32;
+   - collegare l'orologio via USB, aprire `wearable/smartwatch/smartwatch.ino` e caricarlo.
 
 ## 3. Avvio (ogni volta)
 
-1. Accendere il router. Verificare con `ipconfig` che la scheda Ethernet abbia `192.168.1.2`.
-
-2. Chiudere eventuali Mosquitto già attivi, in PowerShell come amministratore:
+1. Accendere il router e verificare con `ipconfig` che la scheda Ethernet del PC abbia `192.168.1.2`.
+2. Chiudere le eventuali istanze di Mosquitto già attive. Se non ce ne sono, i due comandi danno errore ed è normale.
    ```powershell
    net stop mosquitto
    taskkill /F /IM mosquitto.exe
    ```
-
-3. Avviare il broker dalla radice del progetto e lasciare aperta la finestra:
+3. Dalla cartella principale del progetto avviare il broker e lasciare la finestra aperta:
    ```powershell
    & "C:\Program Files\Mosquitto\mosquitto.exe" -c communication\mqtt_broker.conf -v
    ```
-   Deve comparire `Opening ipv4 listen socket on port 1883`.
-
-4. Collegare il Wi-Fi del PC al Tello e avviare:
+   Deve comparire `Opening ipv4 listen socket on port 1883`. Se Windows chiede l'accesso di rete per Mosquitto, spuntare reti private e pubbliche e premere Consenti accesso.
+4. Accendere il Tello, collegare il Wi-Fi del PC alla sua rete (`TELLO-...`) e, in un'altra finestra, avviare il programma del drone:
    ```powershell
    python drone/main.py
    ```
-
-5. Accendere l'orologio. Nella finestra del broker deve comparire `New client connected from 192.168.1.x`.
+5. Accendere l'orologio. Nella finestra del broker deve comparire `New client connected from 192.168.1.x` e sulla prima riga dell'LCD `Rete collegata`.
 
 ## Problemi
 
-Monitor seriale dell'orologio a 115200 baud:
+Se l'orologio non si collega, la prima riga dell'LCD indica dove si è fermato. Lo stesso messaggio, con il codice numerico, compare nel monitor seriale dell'Arduino IDE a 115200 baud.
 
-| Messaggio | Cosa fare |
-|---|---|
-| `stato 1` | router spento o `WIFI_SSID` errato |
-| `stato 4` | `WIFI_PASS` diversa dalla password del router |
-| `stato 0` per più di 20 s | riavviare il router |
-| `codice -2` | avviare Mosquitto, controllare `192.168.1.2` e le regole del firewall |
-| `No DFU capable USB device` al caricamento | installare **Arduino ESP32 Boards** (sezione 2, punto 5) |
+| LCD | Monitor seriale | Cosa fare |
+|---|---|---|
+| `WiFi non trovato` | `stato 1` | accendere il router e verificare che `WIFI_SSID` sia uguale all'SSID del router |
+| `Password errata` | `stato 4` | verificare che `WIFI_PASS` sia uguale alla password del router |
+| `Cerco WiFi...` per più di 20 s | `stato 0` per più di 20 s | riavviare il router |
+| `Broker assente` | `codice -2` o `codice -4` | verificare che il broker sia avviato (sezione 3, punto 3), che il PC abbia `192.168.1.2` e che le regole del firewall esistano (sezione 2, punto 3) |
+
+Se il caricamento del firmware si interrompe con `No DFU capable USB device`, installare Arduino ESP32 Boards (sezione 2, punto 5).

@@ -233,7 +233,8 @@ class AprilTagAutopilotConfig:
 class SmartwatchThresholdsConfig:
     # Copia delle soglie del firmware (BPM_*_IN/OUT e SPO2_MIN_* in
     # wearable/smartwatch/smartwatch.ino): l'allarme lo decide l'orologio, qui
-    # servono solo a disegnarle nei grafici biometrici. Se cambiano lì, vanno
+    # servono solo a disegnarle nei grafici biometrici e a colorare di rosso i
+    # valori fuori soglia nel pannello dell'orologio. Se cambiano lì, vanno
     # cambiate anche qui.
     bpm_min_in: int = 30
     bpm_max_in: int = 120

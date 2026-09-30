@@ -131,6 +131,7 @@ _PATCH = (
     "configure_logging",
     "run_startup",
     "start_mqtt_client",
+    "update_watch_mission",
     "arm_mission",
     "release_mission",
     "setup_video_window",
@@ -221,6 +222,9 @@ class _Banco:
         flight_loop.configure_logging = lambda: None
         flight_loop.run_startup = self._run_startup
         flight_loop.start_mqtt_client = lambda: self.registro.passi.append("mqtt_avvio")
+        flight_loop.update_watch_mission = lambda flying: self.registro.passi.append(
+            "missione_in_volo" if flying else "missione_a_terra"
+        )
         flight_loop.arm_mission = self._arm_mission
         flight_loop.release_mission = self._release_mission
         flight_loop.setup_video_window = lambda dashboard: self.registro.passi.append("finestra")
@@ -534,6 +538,31 @@ def test_l_avvio_annullato_non_apre_il_collegamento_mqtt():
     registro = _Banco(startup_ok=False).esegui()
 
     assert "mqtt_avvio" not in registro.passi
+
+
+def test_a_ogni_giro_l_orologio_riceve_lo_stato_del_volo():
+    registro = _Banco(giri=2).esegui()
+
+    assert registro.passi.index("missione_in_volo") < registro.passi.index("step1")
+    assert registro.passi.count("missione_in_volo") == 4
+
+
+def test_a_terra_la_missione_dell_orologio_non_parte():
+    registro = _Banco(flying=False).esegui()
+
+    assert "missione_in_volo" not in registro.passi
+    assert "missione_a_terra" in registro.passi
+
+
+def test_l_atterraggio_che_chiude_il_volo_chiude_la_missione_dell_orologio():
+    registro = _Banco(
+        autonomy=True,
+        batteria=[(True, True, 0.0)],
+        autonomia_disinnesca=True,
+    ).esegui()
+
+    assert registro.passi.index("land") < registro.passi.index("missione_a_terra")
+    assert registro.passi.index("missione_a_terra") < registro.passi.index("postflight")
 
 
 def test_la_finestra_pygame_si_aggiorna_a_ogni_giro():
