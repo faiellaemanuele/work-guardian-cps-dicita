@@ -112,6 +112,61 @@ def test_supervision_stop_in_progress_requests_detection():
     assert ap.current_waypoint_index == 0
 
 
+def test_pose_beyond_the_walls_stops_the_autopilot():
+    cfg = make_config(flight_area_x_m=(-2.0, 2.0), flight_area_y_m=(-5.0, 3.0))
+    ap = AprilTagAutopilot(cfg, time_source=FakeClock())
+    cmd = ap.compute_command(pose(0.0, -6.0, 1.0, 0.0))
+    assert cmd["fault"] is True
+    assert cmd["reason"] == "out_of_area"
+    assert (cmd["lr"], cmd["fb"], cmd["ud"], cmd["yaw"]) == (0, 0, 0, 0)
+
+
+def test_pose_inside_the_walls_is_tracked_normally():
+    cfg = make_config(flight_area_x_m=(-2.0, 2.0), flight_area_y_m=(-5.0, 3.0))
+    ap = AprilTagAutopilot(cfg, time_source=FakeClock())
+    cmd = ap.compute_command(pose(0.5, 0.5, 1.0, 0.0))
+    assert cmd["fault"] is False
+
+
+def test_brief_pose_loss_keeps_the_supervision_stop_active():
+    clk = FakeClock()
+    cfg = make_config(
+        waypoints=(
+            AutopilotWaypointConfig(x=0.0, y=0.0, z=1.0, yaw_deg=0.0),
+            AutopilotWaypointConfig(x=2.0, y=0.0, z=1.0, yaw_deg=0.0),
+        ),
+        supervision_waypoints=(1,),
+        supervision_stop_sec=5.0,
+        supervision_detection_enabled=True,
+    )
+    ap = AprilTagAutopilot(cfg, time_source=clk)
+    ap.compute_command(pose(0.0, 0.0, 1.0, 0.0))
+    clk.advance(1.0)
+    cmd = ap.compute_command(None)
+    assert cmd["reason"] == "pose_missing"
+    assert cmd["supervision_stop_active"] is True
+    assert cmd["supervision_detection_requested"] is True
+
+
+def test_pose_timeout_during_supervision_stop_is_a_fault():
+    clk = FakeClock()
+    cfg = make_config(
+        waypoints=(
+            AutopilotWaypointConfig(x=0.0, y=0.0, z=1.0, yaw_deg=0.0),
+            AutopilotWaypointConfig(x=2.0, y=0.0, z=1.0, yaw_deg=0.0),
+        ),
+        supervision_waypoints=(1,),
+        supervision_stop_sec=5.0,
+    )
+    ap = AprilTagAutopilot(cfg, time_source=clk)
+    ap.compute_command(pose(0.0, 0.0, 1.0, 0.0))
+    ap.compute_command(None)
+    clk.advance(1.5)
+    cmd = ap.compute_command(None)
+    assert cmd["fault"] is True
+    assert cmd["supervision_stop_active"] is False
+
+
 def test_supervision_stop_completes_after_timeout():
     clk = FakeClock()
     cfg = make_config(
@@ -391,6 +446,34 @@ def test_config_accepts_timeout_exceeding_hold():
 
 def test_config_default_waypoints_is_empty():
     assert AprilTagAutopilotConfig().waypoints == ()
+
+
+def test_config_rejects_video_timeout_before_autopilot_gives_up():
+    from dataclasses import replace
+    from drone.config import APP_CONFIG
+
+    disattivazione = APP_CONFIG.pose_valid_for_sec + APP_CONFIG.apriltag_autopilot.pose_timeout_sec
+    raised = False
+    try:
+        replace(APP_CONFIG, frame_timeout_sec=disattivazione)
+    except ValueError:
+        raised = True
+    assert raised is True
+
+
+def test_config_rejects_non_positive_pose_timeout():
+    from dataclasses import replace
+    from drone.config import APP_CONFIG
+
+    raised = False
+    try:
+        replace(
+            APP_CONFIG,
+            apriltag_autopilot=replace(APP_CONFIG.apriltag_autopilot, pose_timeout_sec=0.0),
+        )
+    except ValueError:
+        raised = True
+    assert raised is True
 
 
 def test_autopilot_requires_at_least_one_waypoint():

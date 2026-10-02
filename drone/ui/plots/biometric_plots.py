@@ -16,6 +16,7 @@ from drone.ui.plots.axes import (
     SAT_DASHES,
     add_session_subtitle,
     add_wp_change_markers,
+    draw_each,
     figure_saver,
     ordered_legend,
 )
@@ -457,10 +458,7 @@ def save_worker_biometric_plots(logger, worker: str, output_dir: Path, plt,
     saved_paths: list[Path] = []
     data = _prepare(logger, worker, output_dir, plt, saved_paths, tag_files=tag_files)
 
-    _hr_comparison(data)
-    _spo2_comparison(data)
-    _hr_session(data)
-    _spo2_session(data)
+    draw_each((_hr_comparison, _spo2_comparison, _hr_session, _spo2_session), data, plt, LOGGER)
 
     LOGGER.info("Grafici biometrici di %s salvati in %s", worker, output_dir)
     return saved_paths

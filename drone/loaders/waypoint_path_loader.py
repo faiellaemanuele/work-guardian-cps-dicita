@@ -217,6 +217,26 @@ def _parse_safety_net_confirm_sec(raw, has_safety_net, supervision_stop_sec):
     return seconds
 
 
+def _allowed_flight_area() -> tuple[tuple[float, float], tuple[float, float]]:
+    # La stanza ristretta del margine dai muri: i waypoint devono cadere qui dentro.
+    margin = APP_CONFIG.flight_area_wall_margin_m
+    (x_min, x_max), (y_min, y_max) = APP_CONFIG.flight_area_x_m, APP_CONFIG.flight_area_y_m
+    return (x_min + margin, x_max - margin), (y_min + margin, y_max - margin)
+
+
+def _too_close_to_walls(x: float, y: float) -> bool:
+    (x_min, x_max), (y_min, y_max) = _allowed_flight_area()
+    return not (x_min <= x <= x_max and y_min <= y <= y_max)
+
+
+def _allowed_flight_area_text() -> str:
+    (x_min, x_max), (y_min, y_max) = _allowed_flight_area()
+    return (
+        f"x da {x_min:.2f} a {x_max:.2f} m e y da {y_min:.2f} a {y_max:.2f} m, "
+        f"cioè almeno {APP_CONFIG.flight_area_wall_margin_m:.2f} m dentro i muri"
+    )
+
+
 def _parse_home_waypoint(raw):
     if raw is None:
         return None
@@ -241,6 +261,11 @@ def _parse_home_waypoint(raw):
         raise _PathConfigError(
             f"'home_waypoint' ha z = {z:g} m, sotto il minimo di {_MIN_SAFE_Z_M:g} m: "
             "z=0 corrisponde al pavimento e la home deve trovarsi a una quota di sicurezza"
+        )
+    if _too_close_to_walls(x, y):
+        raise _PathConfigError(
+            f"'home_waypoint' (x={x:g} m, y={y:g} m) è fuori dall'area di volo: "
+            f"deve stare tra {_allowed_flight_area_text()}"
         )
     return AutopilotWaypointConfig(x=x, y=y, z=z, yaw_deg=yaw_deg)
 
@@ -388,6 +413,19 @@ def _parse_waypoints(raw_waypoints, filename) -> "tuple[AutopilotWaypointConfig,
                     filename,
                     z,
                     _MIN_SAFE_Z_M,
+                )
+                return None
+            # Un errore di battitura in una coordinata manderebbe il drone
+            # contro un muro: il percorso si scarta prima del volo.
+            if _too_close_to_walls(x, y):
+                LOGGER.error(
+                    "Il percorso %s è stato ignorato perché il waypoint %d (x=%.2f m, "
+                    "y=%.2f m) è fuori dall'area di volo: deve stare tra %s",
+                    filename,
+                    len(waypoints) + 1,
+                    x,
+                    y,
+                    _allowed_flight_area_text(),
                 )
                 return None
             waypoints.append(

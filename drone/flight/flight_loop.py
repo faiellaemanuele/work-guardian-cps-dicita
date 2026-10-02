@@ -86,6 +86,15 @@ def run_flight(subsystems: Subsystems) -> bool:
         # La missione dell'orologio segue il volo: il decollo la avvia e
         # qualunque atterraggio, del pilota, automatico o per batteria, la chiude.
         update_watch_mission(controller.is_flying)
+        if not controller.is_flying:
+            # A terra la missione dell'orologio è chiusa e FINE_MISSIONE ne
+            # azzera gli allarmi. Gli allarmi DPI e area restano accesi fra una
+            # sosta e l'altra: senza azzerarli anche qui, al decollo successivo
+            # uno rimasto acceso impedirebbe di segnalare quello nuovo.
+            if person_monitor is not None:
+                person_monitor.reset()
+            if dpi_monitor is not None:
+                dpi_monitor.reset()
 
         autonomy_before_step = pilot_commands.is_autonomy_enabled()
         running = pilot_commands.step()

@@ -70,7 +70,7 @@ def test_supervision_waypoints_parsed():
             "waypoints": [
                 {"x": 0, "y": 0, "z": 1},
                 {"x": 1, "y": 0, "z": 1},
-                {"x": 2, "y": 0, "z": 1},
+                {"x": 1.5, "y": 0, "z": 1},
             ],
             "supervision_waypoints": [3, 1, 1],
             "supervision_stop_sec": 5,
@@ -140,7 +140,7 @@ def test_safety_net_tags_dropped_when_not_supervision_waypoint():
             "waypoints": [
                 {"x": 0, "y": 0, "z": 1},
                 {"x": 1, "y": 0, "z": 1},
-                {"x": 2, "y": 0, "z": 1},
+                {"x": 1.5, "y": 0, "z": 1},
             ],
             "supervision_waypoints": [2],
             "supervision_stop_sec": 5,
@@ -264,13 +264,54 @@ def test_waypoint_at_the_safe_altitude_is_accepted():
         assert len(paths) == 1
 
 
+def test_waypoint_outside_the_flight_area_drops_the_path():
+    with tempfile.TemporaryDirectory() as d:
+        _write(d, "refuso.json", {
+            "waypoints": [
+                {"x": 0, "y": 0, "z": 1},
+                {"x": 0, "y": -45, "z": 1},
+            ],
+        })
+        paths, messages = _load_collecting_errors(d)
+        assert paths == []
+        assert any("fuori dall'area di volo" in m for m in messages), messages
+
+
+def test_waypoint_too_close_to_a_wall_drops_the_path():
+    x_wall = APP_CONFIG.flight_area_x_m[1]
+    margin = APP_CONFIG.flight_area_wall_margin_m
+    with tempfile.TemporaryDirectory() as d:
+        _write(d, "muro.json", {
+            "waypoints": [{"x": x_wall - margin / 2, "y": 0, "z": 1}],
+        })
+        paths, _messages = _load_collecting_errors(d)
+        assert paths == []
+
+
+def test_home_outside_the_flight_area_drops_the_path():
+    with tempfile.TemporaryDirectory() as d:
+        _write(d, "home.json", {
+            "waypoints": [{"x": 0, "y": 0, "z": 1}],
+            "home_waypoint": {"x": 10, "y": 0, "z": 1},
+        })
+        paths, messages = _load_collecting_errors(d)
+        assert paths == []
+        assert any("home_waypoint" in m for m in messages), messages
+
+
+def test_the_project_scenarios_are_inside_the_flight_area():
+    paths, messages = _load_collecting_errors(APP_CONFIG.waypoint_paths_dir)
+    assert messages == []
+    assert len(paths) == len(list(APP_CONFIG.waypoint_paths_dir.glob("*.json")))
+
+
 def test_supervision_stop_sec_parsed():
     with tempfile.TemporaryDirectory() as d:
         _write(d, "a.json", {
             "waypoints": [
                 {"x": 0, "y": 0, "z": 1},
                 {"x": 1, "y": 0, "z": 1},
-                {"x": 2, "y": 0, "z": 1},
+                {"x": 1.5, "y": 0, "z": 1},
             ],
             "supervision_waypoints": [1, 3],
             "supervision_stop_sec": 8,

@@ -24,6 +24,12 @@ WORLD_TAGS_RAW: dict[int, dict[str, tuple[float, float, float]]] = {
 }
 
 
+# Muri della stanza di volo, gli stessi su cui sono appesi i marker 2-9: i
+# waypoint e la posizione stimata del drone devono restarne dentro.
+FLIGHT_AREA_X_M: tuple[float, float] = (-2.04, 1.91)
+FLIGHT_AREA_Y_M: tuple[float, float] = (-5.07, 2.96)
+
+
 SITE_AREA_VERTICES_M: tuple[tuple[float, float], ...] = (
     (-1.0, 1.0),
     (1.0, 1.0),

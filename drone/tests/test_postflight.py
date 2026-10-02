@@ -227,7 +227,7 @@ def test_senza_dati_degli_orologi_non_si_crea_la_sessione_biometrica():
 
 
 def test_il_rilascio_ferma_il_riconoscimento_e_azzera_i_comandi():
-    s = _subsystems(flying=False, dati=True)
+    s = _subsystems(flying=False)
     registro = s._registro
     originale = postflight.cv2
     postflight.cv2 = type(
@@ -239,6 +239,35 @@ def test_il_rilascio_ferma_il_riconoscimento_e_azzera_i_comandi():
         postflight.cv2 = originale
 
     assert registro.passi == ["rc_zero", "vision_stop"]
+
+
+def test_il_cambio_scenario_salva_i_dati_del_volo():
+    s = _subsystems(flying=False, dati=True)
+    registro = s._registro
+    originale = postflight.cv2
+    postflight.cv2 = type(
+        "_Cv2", (), {"destroyAllWindows": staticmethod(lambda: None), "error": Exception},
+    )
+    try:
+        release_mission(s)
+    finally:
+        postflight.cv2 = originale
+
+    assert registro.passi == ["rc_zero", "export", "vision_stop"]
+
+
+def test_il_cambio_scenario_dopo_un_atterraggio_del_pilota_non_salva():
+    s = _subsystems(flying=False, dati=True, atterrato_dal_pilota=True)
+    registro = s._registro
+    originale = postflight.cv2
+    postflight.cv2 = type(
+        "_Cv2", (), {"destroyAllWindows": staticmethod(lambda: None), "error": Exception},
+    )
+    try:
+        release_mission(s)
+    finally:
+        postflight.cv2 = originale
+
     assert "export" not in registro.passi
 
 

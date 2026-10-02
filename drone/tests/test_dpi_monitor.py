@@ -191,6 +191,52 @@ def test_release_grace_rearms_after_long_absence():
     assert _items(m.update(detections_by_model=missing, supervision_active=True)) == {"helmet"}
 
 
+def test_alarm_is_not_cleared_when_the_stop_ends():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    missing = _snapshot("Without_Helmet")
+    assert _items(m.update(detections_by_model=missing, supervision_active=True)) == {"helmet"}
+    for _ in range(5):
+        clk.advance(1.0)
+        assert m.update(detections_by_model=[], supervision_active=False) == []
+
+
+def test_next_stop_sends_dpi_ok_only_after_the_grace():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    missing = _snapshot("Without_Helmet")
+    m.update(detections_by_model=missing, supervision_active=True)
+    clk.advance(30.0)
+    m.update(detections_by_model=[], supervision_active=False)
+    assert m.update(detections_by_model=[], supervision_active=True) == []
+    clk.advance(1.1)
+    assert _tipi(m.update(detections_by_model=[], supervision_active=True)) == {"dpi_ok"}
+
+
+def test_dpi_still_missing_at_next_stop_is_not_repeated():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    missing = _snapshot("Without_Helmet")
+    m.update(detections_by_model=missing, supervision_active=True)
+    clk.advance(30.0)
+    m.update(detections_by_model=[], supervision_active=False)
+    assert m.update(detections_by_model=missing, supervision_active=True) == []
+
+
+def test_partial_streak_does_not_carry_over_to_the_next_stop():
+    clk = FakeClock()
+    m = _monitor(alarm_after_sec=2.0, time_source=clk)
+    missing = _snapshot("Without_Helmet")
+    m.update(detections_by_model=missing, supervision_active=True)
+    clk.advance(1.5)
+    m.update(detections_by_model=missing, supervision_active=True)
+    m.update(detections_by_model=[], supervision_active=False)
+    clk.advance(10.0)
+    assert m.update(detections_by_model=missing, supervision_active=True) == []
+    clk.advance(1.0)
+    assert m.update(detections_by_model=missing, supervision_active=True) == []
+
+
 def test_reset_clears_state():
     m = _monitor()
     missing = _snapshot("Without_Helmet")

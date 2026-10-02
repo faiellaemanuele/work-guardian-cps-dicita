@@ -65,6 +65,7 @@ _REASON_MAP = {
     "mission_finished": "Missione completata",
     "pose_timeout": "Posizione persa",
     "pose_missing": "Posizione assente",
+    "out_of_area": "Posizione fuori dalla stanza",
     "home": "Rientro alla base",
     "supervision_stop": "Sosta di supervisione",
     "supervision_stop_started": "Supervisione avviata",

@@ -76,9 +76,11 @@ class PersonMonitor:
             time_source=time_source,
         )
         self._now = time_source if time_source is not None else time.monotonic
+        self._observing = False
 
     def reset(self) -> None:
         self._latch.reset()
+        self._observing = False
 
     def update(
         self,
@@ -89,20 +91,29 @@ class PersonMonitor:
         now = self._now()
         alarms: list[dict[str, Any]] = []
 
-        crossing_count = None
-        if supervision_active and self._restricted_area_tolerance_px is not None:
-            crossing_count = self._persons_crossing(detections_by_model)
-        area_era_attiva = self._latch.is_active(_ALARM_RESTRICTED_AREA)
-        if self._latch.update(_ALARM_RESTRICTED_AREA, crossing_count is not None, now):
-            alarms.append(self._crossing_alarm(crossing_count))
-        # Senza questo rientro l'orologio resterebbe in allarme anche dopo che
-        # l'area e' stata liberata, fino a un silenziamento o a un riavvio.
-        elif area_era_attiva and not self._latch.is_active(_ALARM_RESTRICTED_AREA):
-            alarms.append({
-                "type": _ALARM_RESTRICTED_AREA_OK,
-                "title": "Area vietata di nuovo libera",
-                "message": "Nessuna persona nell'area vietata",
-            })
+        # Fuori dalla sosta il drone non osserva l'area: l'allarme resta com'è,
+        # senza AREA_OK, perché non vedere più nessuno non vuol dire che l'area
+        # sia libera. Lo spegne una sosta successiva o la fine della missione.
+        if supervision_active:
+            if not self._observing:
+                self._latch.begin_observation(now)
+                self._observing = True
+            crossing_count = None
+            if self._restricted_area_tolerance_px is not None:
+                crossing_count = self._persons_crossing(detections_by_model)
+            area_era_attiva = self._latch.is_active(_ALARM_RESTRICTED_AREA)
+            if self._latch.update(_ALARM_RESTRICTED_AREA, crossing_count is not None, now):
+                alarms.append(self._crossing_alarm(crossing_count))
+            # Senza questo rientro l'orologio resterebbe in allarme anche dopo che
+            # l'area e' stata liberata, fino a un silenziamento o a un riavvio.
+            elif area_era_attiva and not self._latch.is_active(_ALARM_RESTRICTED_AREA):
+                alarms.append({
+                    "type": _ALARM_RESTRICTED_AREA_OK,
+                    "title": "Area vietata di nuovo libera",
+                    "message": "Nessuna persona nell'area vietata",
+                })
+        else:
+            self._observing = False
 
         fall_count = 0
         if supervision_active:

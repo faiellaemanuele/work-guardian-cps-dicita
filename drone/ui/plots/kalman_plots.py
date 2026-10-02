@@ -11,6 +11,7 @@ from matplotlib.transforms import blended_transform_factory
 from drone.data.flight_report_stats import elapsed_seconds
 from drone.ui.plots.axes import (
     add_session_subtitle,
+    draw_each,
     figure_saver,
     ordered_legend,
     style_axis,
@@ -304,10 +305,7 @@ def save_kalman_plots(logger, output_dir: Path, plt) -> list[Path]:
     saved_paths: list[Path] = []
     data = _prepare(logger, output_dir, plt, saved_paths)
 
-    _trajectory(data)
-    _correction(data)
-    _yaw(data)
-    _position(data)
+    draw_each((_trajectory, _correction, _yaw, _position), data, plt, LOGGER)
 
     LOGGER.info("Grafici Kalman salvati in %s", output_dir)
     return saved_paths

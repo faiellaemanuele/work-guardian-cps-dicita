@@ -99,6 +99,13 @@ class AprilTagAutopilot:
 
         self.yaw_offset_deg = float(config.yaw_offset_deg)
 
+        self.flight_area_x_m = (
+            None if config.flight_area_x_m is None else tuple(float(v) for v in config.flight_area_x_m)
+        )
+        self.flight_area_y_m = (
+            None if config.flight_area_y_m is None else tuple(float(v) for v in config.flight_area_y_m)
+        )
+
         self.current_waypoint_index = 0
         self.finished = False
         self._missing_pose_since: Optional[float] = None
@@ -313,6 +320,12 @@ class AprilTagAutopilot:
             yaw_deg=float(yaw_world_deg),
         )
 
+    def _is_outside_flight_area(self, pose: _PoseState) -> bool:
+        for value, bounds in ((pose.x, self.flight_area_x_m), (pose.y, self.flight_area_y_m)):
+            if bounds is not None and not (bounds[0] <= value <= bounds[1]):
+                return True
+        return False
+
     def _missing_pose_command(
         self, now: float, *, timeout_reason: str, transient_reason: str
     ) -> dict[str, Any]:
@@ -320,9 +333,13 @@ class AprilTagAutopilot:
             self._missing_pose_since = now
         elapsed = now - self._missing_pose_since
         timed_out = elapsed > self.pose_timeout_sec
+        # Una perdita breve dei marker non interrompe la sosta: senza questi
+        # campi la sorveglianza la crederebbe finita e spegnerebbe gli allarmi.
+        supervision_fields = {} if timed_out else self._supervision_command_fields(now)
         return self._zero_command(
             reason=timeout_reason if timed_out else transient_reason,
             fault=timed_out,
+            **supervision_fields,
         )
 
     def _z_priority_command(
@@ -418,6 +435,12 @@ class AprilTagAutopilot:
             )
 
         self._missing_pose_since = None
+
+        # Oltre i muri il drone non può trovarsi: la stima è sbagliata, o il
+        # drone sta per urtare. Inseguire un waypoint da lì lo porterebbe
+        # chissà dove.
+        if self._is_outside_flight_area(pose):
+            return self._zero_command(reason="out_of_area", fault=True)
 
         if self._waypoint_active_since is None:
             self._waypoint_active_since = now

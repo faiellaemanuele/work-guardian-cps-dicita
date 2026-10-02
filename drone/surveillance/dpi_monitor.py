@@ -79,9 +79,11 @@ class DpiMonitor:
             time_source=time_source,
         )
         self._now = time_source if time_source is not None else time.monotonic
+        self._observing = False
 
     def reset(self) -> None:
         self._latch.reset()
+        self._observing = False
 
     def update(
         self,
@@ -90,13 +92,22 @@ class DpiMonitor:
         supervision_active: bool,
     ) -> list[dict[str, Any]]:
         now = self._now()
+        # Fuori dalla sosta il drone non osserva: gli allarmi restano come sono,
+        # senza DPI_OK, perché non vedere più nessuno non vuol dire che i DPI
+        # siano tornati. Li spegne una sosta successiva che non li vede più, o
+        # la fine della missione.
+        if not supervision_active:
+            self._observing = False
+            return []
+        if not self._observing:
+            self._latch.begin_observation(now)
+            self._observing = True
+
         alarms: list[dict[str, Any]] = []
         era_attivo = any(self._latch.is_active(k) for k in self.required_items)
         for key in self.required_items:
             absent_label = _DPI_ITEMS[key][1]
-            present = False
-            if supervision_active:
-                present = _count_label(detections_by_model, self.dpi_model_name, absent_label) > 0
+            present = _count_label(detections_by_model, self.dpi_model_name, absent_label) > 0
             if self._latch.update(key, present, now):
                 alarms.append(self._missing_alarm(key))
         # L'orologio mostra l'elenco completo di cio' che manca in quel momento,

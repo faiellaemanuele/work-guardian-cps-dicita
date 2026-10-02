@@ -42,6 +42,7 @@ class RealTelloController:
         self.tello = Tello(host=host) if host else Tello()
 
         self.frame_reader = None
+        self._last_frame = None
 
         self.is_connected = False
         self.is_flying = False
@@ -157,6 +158,16 @@ class RealTelloController:
         try:
             self.tello.takeoff()
         except Exception:
+            # Il Tello a volte risponde in ritardo al decollo: il comando va in
+            # errore ma il drone si è alzato. Senza questo controllo resterebbe
+            # "a terra" per il programma, che ne scarterebbe i comandi.
+            if self._telemetry_says_airborne():
+                LOGGER.warning(
+                    "Il comando di decollo è andato in errore, ma secondo la telemetria "
+                    "il drone è in volo: il decollo viene considerato riuscito"
+                )
+                self.is_flying = True
+                return True
             LOGGER.exception("Il comando di decollo non è andato a buon fine")
             raise
 
@@ -279,6 +290,9 @@ class RealTelloController:
             raise RuntimeError("non è stato possibile avviare la ricezione delle immagini")
 
         self.frame_reader = frame_reader
+        # L'immagine nera che djitellopy espone prima della prima decodifica
+        # conta come già vista: non viene dalla camera.
+        self._last_frame = getattr(frame_reader, "frame", None)
         LOGGER.info("Il video della camera è stato avviato")
 
     def get_frame(self) -> Optional["np.ndarray"]:
@@ -291,8 +305,14 @@ class RealTelloController:
             LOGGER.exception("L'immagine della camera non è stata ricevuta")
             return None
 
-        if frame is None:
+        # djitellopy continua a restituire l'ultima immagine decodificata anche
+        # quando il video si ferma, e ne crea una nuova per ogni immagine
+        # ricevuta: la stessa due volte vuol dire che non ne è arrivata un'altra.
+        # Senza questo controllo un video bloccato non verrebbe mai rilevato e la
+        # posizione ricavata dall'immagine ferma sembrerebbe sempre aggiornata.
+        if frame is None or frame is self._last_frame:
             return None
+        self._last_frame = frame
 
         if getattr(frame, "size", 0) == 0 or getattr(frame, "ndim", None) != 3:
             return None
@@ -304,6 +324,7 @@ class RealTelloController:
         had_reader = frame_reader is not None
 
         self.frame_reader = None
+        self._last_frame = None
 
         if frame_reader is not None and hasattr(frame_reader, "stop"):
             try:

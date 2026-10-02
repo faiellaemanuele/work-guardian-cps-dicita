@@ -19,6 +19,7 @@ from drone.ui.plots.axes import (
     add_session_subtitle,
     add_tolerance_tick,
     add_wp_change_markers,
+    draw_each,
     figure_saver,
     ordered_legend,
     plain_number,
@@ -517,12 +518,10 @@ def save_autopilot_plots(logger, output_dir: Path, plt) -> list[Path]:
     saved_paths: list[Path] = []
     data = _prepare(logger, output_dir, plt, saved_paths)
 
-    _trajectory(data)
-    _distance(data)
-    _rc_commands(data)
-    _error_xy(data)
-    _error_z(data)
-    _error_yaw(data)
+    draw_each(
+        (_trajectory, _distance, _rc_commands, _error_xy, _error_z, _error_yaw),
+        data, plt, LOGGER,
+    )
 
     LOGGER.info("Grafici autopilota salvati in %s", output_dir)
     return saved_paths

@@ -53,6 +53,7 @@ def make_controller(*, connected=True, flying=False, min_batt=0, battery=100, he
     c = object.__new__(RealTelloController)
     c.tello = FakeTello(battery=battery, height=height)
     c.frame_reader = None
+    c._last_frame = None
     c.is_connected = connected
     c.is_flying = flying
     c.min_takeoff_battery_pct = min_batt
@@ -139,6 +140,64 @@ def test_takeoff_allowed_when_battery_read_recovers():
     c.tello.get_battery = _flaky
     assert c.takeoff() is True
     assert c.tello.takeoff_called is True
+
+
+def test_takeoff_error_counts_as_success_when_telemetry_says_airborne():
+    c = make_controller(connected=True, flying=False, min_batt=0, height=[0, 100, 100])
+
+    def _timeout():
+        raise RuntimeError("risposta al decollo arrivata in ritardo")
+
+    c.tello.takeoff = _timeout
+    assert c.takeoff() is True
+    assert c.is_flying is True
+
+
+def test_takeoff_error_is_raised_when_still_grounded():
+    c = make_controller(connected=True, flying=False, min_batt=0, height=0)
+
+    def _error():
+        raise RuntimeError("motori non avviati")
+
+    c.tello.takeoff = _error
+    try:
+        c.takeoff()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("l'errore di decollo doveva essere rilanciato")
+    assert c.is_flying is False
+
+
+class _FakeFrameReader:
+    def __init__(self, frame):
+        self.frame = frame
+
+
+def _frame():
+    import numpy as np
+    return np.zeros((4, 4, 3), dtype=np.uint8)
+
+
+def test_get_frame_returns_each_new_image_once():
+    c = make_controller()
+    reader = _FakeFrameReader(_frame())
+    c.frame_reader = reader
+
+    assert c.get_frame() is not None
+    assert c.get_frame() is None, "la stessa immagine non è un'immagine nuova"
+
+    reader.frame = _frame()
+    assert c.get_frame() is not None
+
+
+def test_get_frame_ignores_the_placeholder_seen_at_stream_start():
+    c = make_controller()
+    placeholder = _frame()
+    c.frame_reader = _FakeFrameReader(placeholder)
+    c._last_frame = placeholder
+
+    assert c.get_frame() is None
 
 
 def test_takeoff_noop_when_already_flying():

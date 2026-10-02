@@ -488,12 +488,25 @@ def test_il_monitor_reti_non_confonde_un_altro_modello():
 
 
 def test_la_sorveglianza_delle_persone_e_attiva_solo_in_sosta():
-    banco = _Banco(None, ultimo_comando={"supervision_stop_active": True})
+    banco = _Banco(
+        None,
+        ultimo_comando={"supervision_stop_active": True},
+        detections=[{"name": "Caduta_delle_Persone", "detections": []}],
+    )
     monitor = _Monitor(banco.registro)
 
     _esegui_sorveglianza(banco, monitor)
 
     assert monitor.ricevuto["supervision_active"] is True
+
+
+def test_la_sosta_non_e_osservata_prima_dei_primi_risultati():
+    banco = _Banco(None, ultimo_comando={"supervision_stop_active": True}, detections=[])
+    monitor = _Monitor(banco.registro)
+
+    _esegui_sorveglianza(banco, monitor, dpi=True)
+
+    assert monitor.ricevuto["supervision_active"] is False
 
 
 def test_fuori_dalla_sosta_la_sorveglianza_non_controlla():

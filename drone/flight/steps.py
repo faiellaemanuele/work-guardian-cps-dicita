@@ -50,6 +50,7 @@ def _emit_safety_net_verdict(verdict: dict) -> None:
 _FAULT_DETAILS = {
     "waypoint_timeout": "tempo scaduto",
     "pose_timeout": "posizione persa",
+    "out_of_area": "fuori dai muri",
 }
 
 _ALARM_LEVELS = {
@@ -102,16 +103,28 @@ def _emit_surveillance_alert(alert: dict, vision_loop) -> None:
         LOGGER.warning("Non è stato possibile inviare al broker l'allarme di sorveglianza", exc_info=True)
 
 
-def handle_person_step(*, person_monitor, vision_loop, pilot_commands) -> None:
-    if person_monitor is None:
-        return
+def _surveillance_inputs(vision_loop, pilot_commands) -> tuple[list, bool]:
     command = vision_loop.last_autopilot_command or {}
+    detections = vision_loop.get_cached_detections_snapshot()
+    # Il riconoscimento si accende con la sosta e i primi risultati arrivano
+    # dopo qualche istante: fino ad allora la sosta non è ancora osservata, e
+    # un elenco vuoto non vuol dire "nessuno in vista". Senza questa attesa un
+    # allarme rimasto acceso dalla sosta precedente si spegnerebbe prima che
+    # il drone abbia guardato.
     supervision_active = (
         pilot_commands.is_autonomy_enabled()
         and bool(command.get("supervision_stop_active", False))
+        and bool(detections)
     )
+    return detections, supervision_active
+
+
+def handle_person_step(*, person_monitor, vision_loop, pilot_commands) -> None:
+    if person_monitor is None:
+        return
+    detections, supervision_active = _surveillance_inputs(vision_loop, pilot_commands)
     alarms = person_monitor.update(
-        detections_by_model=vision_loop.get_cached_detections_snapshot(),
+        detections_by_model=detections,
         supervision_active=supervision_active,
     )
     for alarm in alarms:
@@ -121,13 +134,9 @@ def handle_person_step(*, person_monitor, vision_loop, pilot_commands) -> None:
 def handle_dpi_step(*, dpi_monitor, vision_loop, pilot_commands) -> None:
     if dpi_monitor is None:
         return
-    command = vision_loop.last_autopilot_command or {}
-    supervision_active = (
-        pilot_commands.is_autonomy_enabled()
-        and bool(command.get("supervision_stop_active", False))
-    )
+    detections, supervision_active = _surveillance_inputs(vision_loop, pilot_commands)
     alarms = dpi_monitor.update(
-        detections_by_model=vision_loop.get_cached_detections_snapshot(),
+        detections_by_model=detections,
         supervision_active=supervision_active,
     )
     for alarm in alarms:

@@ -32,6 +32,24 @@ def test_numero_semplice_usa_il_meno_tipografico():
     assert plain_number(-0.5) == "−0.5"
 
 
+def test_un_grafico_in_errore_non_blocca_i_successivi():
+    if not _matplotlib_available():
+        return
+    import logging
+    from drone.ui.plots.axes import draw_each
+    plt, _ = _axes()
+    disegnati = []
+
+    def _rotto(_data):
+        raise ValueError("dati incompleti")
+
+    def _buono(data):
+        disegnati.append(data)
+
+    draw_each((_rotto, _buono), "sessione", plt, logging.getLogger("test_axes"))
+    assert disegnati == ["sessione"]
+
+
 def test_lo_stile_degli_assi_nasconde_la_cornice_in_alto_e_a_destra():
     if not _matplotlib_available():
         return

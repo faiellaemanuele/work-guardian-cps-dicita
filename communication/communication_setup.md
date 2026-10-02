@@ -50,24 +50,25 @@ I comandi vanno eseguiti in una finestra di PowerShell aperta come amministrator
    ```
 3. Dalla cartella principale del progetto avviare il broker e lasciare la finestra aperta:
    ```powershell
-   & "C:\Program Files\Mosquitto\mosquitto.exe" -c communication\mqtt_broker.conf -v
+   & "C:\Program Files\Mosquitto\mosquitto.exe" -c "C:\Users\faiel\Desktop\work-guardian-cps\communication\mqtt_broker.conf" -v
    ```
    Deve comparire `Opening ipv4 listen socket on port 1883`. Se Windows chiede l'accesso di rete per Mosquitto, spuntare reti private e pubbliche e premere Consenti accesso.
 4. Accendere il Tello, collegare il Wi-Fi del PC alla sua rete (`TELLO-...`) e, in un'altra finestra, avviare il programma del drone:
    ```powershell
    python drone/main.py
    ```
-5. Accendere l'orologio. Nella finestra del broker deve comparire `New client connected from 192.168.1.x` e sulla prima riga dell'LCD `Rete collegata`.
+5. Accendere l'orologio. Nella finestra del broker deve comparire `New client connected from 192.168.1.x` e sull'LCD `Connessione` / `stabilita`.
 
 ## Problemi
 
-Se l'orologio non si collega, la prima riga dell'LCD indica dove si è fermato. Lo stesso messaggio, con il codice numerico, compare nel monitor seriale dell'Arduino IDE a 115200 baud.
+Se l'orologio non si collega, la seconda riga dell'LCD, sotto `Connessione`, indica dove si è fermato. Lo stesso messaggio, con il codice numerico, compare nel monitor seriale dell'Arduino IDE a 115200 baud.
 
-| LCD | Monitor seriale | Cosa fare |
+| LCD, seconda riga | Monitor seriale | Cosa fare |
 |---|---|---|
-| `WiFi non trovato` | `stato 1` | accendere il router e verificare che `WIFI_SSID` sia uguale all'SSID del router |
+| `assente` | `stato 1` | accendere il router e verificare che `WIFI_SSID` sia uguale all'SSID del router |
 | `Password errata` | `stato 4` | verificare che `WIFI_PASS` sia uguale alla password del router |
-| `Cerco WiFi...` per più di 20 s | `stato 0` per più di 20 s | riavviare il router |
+| `in corso...` per più di 20 s | `stato 0` per più di 20 s | riavviare il router |
 | `Broker assente` | `codice -2` o `codice -4` | verificare che il broker sia avviato (sezione 3, punto 3), che il PC abbia `192.168.1.2` e che le regole del firewall esistano (sezione 2, punto 3) |
+| `persa` | `connessione persa da 15 s` | verificare che il router sia acceso e il broker avviato; l'orologio si ricollega da solo |
 
 Se il caricamento del firmware si interrompe con `No DFU capable USB device`, installare Arduino ESP32 Boards (sezione 2, punto 5).

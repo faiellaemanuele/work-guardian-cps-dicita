@@ -17,7 +17,7 @@
 // STATI:
 //   z0 STATE_MISSION_NOT_STARTED - connesso (o in attesa di esserlo) al CC, la
 //      missione non e' ancora iniziata. Il ciclo di monitoraggio non e'
-//      attivo; la prima riga dell'LCD mostra lo stato del collegamento.
+//      attivo; l'LCD mostra lo stato del collegamento.
 //   z1 STATE_SEARCHING_SIGNAL - missione attiva, sensore non ancora agganciato.
 //   z2 STATE_NORMAL - lettura valida, parametri nella norma.
 //   z3 STATE_VERIFYING - condizione critica rilevata, in attesa di conferma
@@ -25,7 +25,10 @@
 //   z4 STATE_ALARM - almeno una causa di allarme e' attiva (vedi sotto).
 //   z5 STATE_SILENCED - notifica sospesa dall'operatore, le cause restano
 //      tracciate in sottofondo.
-//   z6 STATE_FAULT - il sensore non risponde o si e' bloccato.
+//   z6 STATE_FAULT - il sensore non risponde sul bus I2C, anche se si
+//      stacca a orologio acceso (controllato ogni 2 secondi). Se
+//      all'accensione il sensore non risponde dopo tutti i tentativi, si
+//      parte da qui anche senza missione e ci si resta finche' non risponde.
 //
 // z0 E IL BYPASS PER I TEST DA BANCO:
 //   In funzionamento reale, il dispositivo resta in z0 finche' non riceve
@@ -33,11 +36,12 @@
 //   pubblica al decollo e pubblica {"tipo":"FINE_MISSIONE"} a qualunque
 //   atterraggio; entrambi restano sul broker (retain), quindi l'orologio li
 //   riceve anche se si collega a volo gia' iniziato. All'avvio e alla fine
-//   della missione l'LCD mostra per qualche secondo "MISSIONE AVVIATA" /
-//   "MISSIONE FINITA", con il LED blu fisso e un breve colpo di vibrazione.
-//   Allo stesso modo, a missione avviata, "RETE PERSA" / "RETE COLLEGATA"
-//   segnalano che il collegamento al broker e' caduto per almeno 15 secondi
-//   o e' tornato dopo una caduta cosi' lunga.
+//   della missione l'LCD mostra per qualche secondo "Missione avviata" /
+//   "Missione terminata", con il LED blu fisso e un breve colpo di vibrazione.
+//   Se il collegamento al broker, una volta stabilito, cade per almeno 15
+//   secondi, l'LCD mostra fisso "Connessione persa" finche' non torna, con o
+//   senza missione: senza rete l'orologio non riceve gli allarmi del drone.
+//   Un allarme ha comunque la precedenza su questa schermata.
 //   Per i test senza il drone, la costante BYPASS_MISSION_WAIT piu' sotto,
 //   se messa a true, salta z0, fa partire il dispositivo direttamente in z1
 //   e ignora la fine missione. IMPORTANTE: ricordarsi di rimetterla a false
@@ -122,6 +126,7 @@
 #include "MAX30100_PulseOximeter.h" //libreria del sensore biometrico
 #include <WiFi.h> //libreria per la connessione wi-fi
 #include <PubSubClient.h> //libreria per protocollo MQTT
+#include <lwip/sockets.h> //select() sul socket del broker, per sapere se c'e' posto per scrivere
 #include <Preferences.h> //Libreria per scrivere o leggere dati nella memoria permanente della scheda (sopravvive ai riavvii)
 
 // ---------- Test da banco senza drone ----------
@@ -154,11 +159,20 @@ const LEDCurrent IR_LED_CURRENT = MAX30100_LED_CURR_14_2MA;
 
 bool sensorPresent = false; // il sensore risponde correttamente?
 const int SENSOR_MAX_ATTEMPTS = 10; // quante volte riprovare ad agganciare il sensore all'accensione
-const unsigned long SENSOR_RETRY_INTERVAL_MS = 30000; // ogni quanto riprovare in sottofondo se manca
+const unsigned long SENSOR_RETRY_INTERVAL_MS = 5000; // ogni quanto riprovare in sottofondo se manca
 unsigned long lastSensorRetryMs = 0; // un "segnaposto" che ricorda quando è stato fatto l'ultimo tentativo.
+// Controllo periodico del sensore gia' agganciato: un filo staccato a
+// orologio acceso non blocca la libreria, che continua a leggere valori a vuoto.
+const unsigned long SENSOR_CHECK_INTERVAL_MS = 2000; // ogni quanto interrogare il sensore
+const int SENSOR_MAX_MISSED_CHECKS = 2; // controlli falliti di fila prima di darlo per perso
+unsigned long lastSensorCheckMs = 0;
+int missedSensorChecks = 0;
 
 // ---------- Persistenza missione (sopravvive a un reset) ----------
 Preferences prefs; // oggetto che verrà utilizzato per accedere alla memoria permanente
+// Missione in corso. Di solito equivale a "stato diverso da z0", ma senza
+// sensore l'orologio resta in z6 anche fuori missione.
+bool missionActive = false;
 
 // ---------- Rete e canale MQTT ----------
 // Rete WiFi e indirizzo del broker si impostano in network_config.h
@@ -192,8 +206,29 @@ bool          wifiAttemptStarted = false;
 // successivo e un avviso sarebbe solo fastidioso.
 const unsigned long NETWORK_LOSS_GRACE_MS = 15000;
 bool          brokerWasConnected  = false;  // collegamento al broker al giro precedente
+bool          brokerEverConnected = false;  // broker collegato almeno una volta dall'accensione
 unsigned long brokerLostSinceMs   = 0;      // da quando il broker non risponde
 bool          networkReportedDown = true;   // rete data per assente sull'LCD (all'accensione non e' ancora collegata)
+
+// Il collegamento al broker gira in un task FreeRTOS a parte: mqtt.connect()
+// aspetta fino a 3 s il PC e fino a 2 s la risposta, e intanto il loop deve
+// continuare a leggere il sensore, il pulsante e a muovere la vibrazione.
+// Finche' il task lavora, il loop non tocca mqtt.
+String        mqttClientId;                     // riempito in setup(), dipende da WORKER_ID
+volatile bool brokerConnectRunning  = false;    // task di collegamento in corso
+volatile bool brokerConnectFinished = false;    // il task ha finito, esito da raccogliere
+volatile bool brokerConnectOk       = false;    // esito dell'ultimo tentativo
+// Se il PC sparisce senza chiudere la connessione, il buffer di invio si
+// riempie e ogni scrittura fermerebbe il loop fino a 10 s: si scrive solo se
+// c'e' posto, e una connessione che non accetta dati per BROKER_STALL_MS si chiude.
+const unsigned long BROKER_STALL_MS = 5000;
+unsigned long brokerWritableSinceMs = 0;        // ultima volta in cui si poteva scrivere
+
+// Allarme biometrico (azione p) in attesa di essere consegnato al drone: se
+// scatta a rete caduta parte appena il broker torna, invece di andare perso.
+bool biometricAlarmPending = false;
+int  pendingAlarmBpm  = 0;
+int  pendingAlarmSpo2 = 0;
 
 // ---------- Cause di allarme (z4) ----------
 // I tre "interruttori" indipendenti che, combinati, decidono se lo stato
@@ -242,12 +277,12 @@ int vibrationCause = CAUSE_NONE;
 unsigned long vibrationCauseSinceMs = 0;
 
 // ---------- Avvisi temporanei ----------
-// Per qualche secondo dopo il decollo o l'atterraggio del drone, o quando la
-// rete cade o torna a missione avviata, la prima riga dell'LCD lo dice e il
-// LED blu resta acceso fisso. Un allarme che arriva nel frattempo lo scavalca
-// subito.
+// Per qualche secondo dopo il decollo o l'atterraggio del drone l'LCD lo dice
+// su entrambe le righe e il LED blu resta acceso fisso. Un allarme che arriva
+// nel frattempo lo scavalca subito.
 const unsigned long NOTICE_MS = 3000;
-const char*   noticeText    = nullptr;  // nullptr = nessun avviso mostrato finora
+const char*   noticeLine1   = nullptr;  // nullptr = nessun avviso mostrato finora
+const char*   noticeLine2   = "";
 unsigned long noticeStartMs = 0;
 
 // ---------- Soglie con ISTERESI ----------
@@ -265,8 +300,7 @@ const int SPO2_MIN_OUT = 94;
 // ---------- Temporizzazioni della FSM ----------
 const unsigned long PERSISTENCE_MS        = 3000; // quanto deve durare una condizione critica prima di essere confermata (evento s4)
 const unsigned long SILENCE_TIMEOUT_MS    = 30000; // quanto dura al massimo un silenziamento prima di riattivarsi da solo (evento t)
-const unsigned long HR_STALE_TIMEOUT_MS   = 5000; //Se non arriva nessun battito per 5 secondi, la lettura del battito viene considerata non più valida
-const unsigned long BEAT_FAULT_TIMEOUT_MS = 10000; //Se il dito sembra presente (SpO2 plausibile) ma non arriva nessun battito per 10 secondi, è un guasto vero (non solo "dito non messo").
+const unsigned long HR_STALE_TIMEOUT_MS   = 5000; //Se non arriva nessun battito per 5 secondi, la lettura (battito e SpO2) viene considerata non più valida
 
 // ---------- Macchina a stati ----------
 // Corrispondenza con la nomenclatura dell'automa: z0=STATE_MISSION_NOT_STARTED,
@@ -346,6 +380,10 @@ float spo2Raw = 0;
 int bpm  = 0; //I valori finali arrotondati a numero intero - quelli 
 int spo2 = 0; //che effettivamente vengono mostrati sull'LCD e confrontati con le soglie.
 bool readingValid = false; // true solo quando entrambe le catene (hrReady e spo2Ready) sono agganciate
+// Ultima lettura valida, mostrata dall'allarme biometrico anche quando il
+// segnale si perde per un momento
+int lastValidBpm  = 0;
+int lastValidSpo2 = 0;
 
 // ---------- Timer ----------
 // Ogni quanto (in millisecondi) eseguire ciascun compito periodico
@@ -433,7 +471,7 @@ void publishTelemetry() {
            hrRawText, hrFilteredText, spo2RawText, spo2FilteredText);
 
   // Il messaggio piu' lungo sta sotto i 200 caratteri: insieme al topic resta
-  // entro i 256 byte di pacchetto che PubSubClient accetta di default.
+  // entro il buffer di PubSubClient (setBufferSize in setup()).
   char payload[224];  // buffer di testo dove costruiamo il JSON prima di inviarlo
   if (readingValid) {
     snprintf(payload, sizeof(payload),  // compone la stringa in modo sicuro, senza sforare la dimensione del buffer
@@ -455,17 +493,31 @@ void publishTelemetry() {
 // funzione viene chiamata una volta sola, esattamente nel momento in cui
 // scatta l'allarme biometrico - utile al CC per registrare "quando" è
 // successo, non solo "come sta ora".
+// Qui l'allarme viene solo registrato: lo invia sendPendingBiometricAlarm()
+// appena il broker puo' riceverlo, cosi' a rete caduta non va perso.
 void publishBiometricAlarm() {
-  char payload[160];
-  snprintf(payload, sizeof(payload),
-           "{\"bpm\":%d,\"spo2\":%d,\"evento\":\"BIOMETRIA_ANOMALA\"}",
-           bpm, spo2);
-  mqtt.publish(telemetryTopic.c_str(), payload);
+  pendingAlarmBpm  = bpm;
+  pendingAlarmSpo2 = spo2;
+  biometricAlarmPending = true;
   Serial.print("[ALLARME] valori fuori soglia, BPM ");
   Serial.print(bpm);
   Serial.print(" e SpO2 ");
   Serial.print(spo2);
-  Serial.println("%: avviso inviato al drone");
+  Serial.println("%");
+}
+
+// Consegna al drone l'allarme biometrico in attesa, se c'e'. Chiamata dal
+// loop solo con il broker collegato; se l'invio fallisce si riprova al giro dopo.
+void sendPendingBiometricAlarm() {
+  if (!biometricAlarmPending) return;
+  char payload[160];
+  snprintf(payload, sizeof(payload),
+           "{\"bpm\":%d,\"spo2\":%d,\"evento\":\"BIOMETRIA_ANOMALA\"}",
+           pendingAlarmBpm, pendingAlarmSpo2);
+  if (mqtt.publish(telemetryTopic.c_str(), payload)) {
+    biometricAlarmPending = false;
+    Serial.println("[ALLARME] avviso inviato al drone");
+  }
 }
 
 // Estrae il valore stringa di un campo JSON semplice, dato il suo nome
@@ -524,9 +576,12 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   // dei tre ha innescato l'atterraggio.
   if (type == "AVVIO_MISSIONE") {
     prefs.putBool("missione", true);  // salvato in memoria permanente: sopravvive a un reset (r)
-    if (currentState == STATE_MISSION_NOT_STARTED) {
-      currentState = sensorPresent ? STATE_SEARCHING_SIGNAL : STATE_FAULT;  // z0 -> z1, oppure z6 se il sensore manca
-      showNotice("MISSIONE AVVIATA");  // solo all'avvio vero, non a ogni ricollegamento
+    if (!missionActive) {
+      missionActive = true;
+      if (currentState == STATE_MISSION_NOT_STARTED) {
+        currentState = STATE_SEARCHING_SIGNAL;  // z0 -> z1; senza sensore si resta in z6
+      }
+      showNotice("Missione", "avviata");  // solo all'avvio vero, non a ogni ricollegamento
       pulseVibration(150);
     }
     return;
@@ -538,22 +593,24 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
       Serial.println("[DRONE] ignorato: test da banco");
       return;
     }
-    bool missionWasRunning = (currentState != STATE_MISSION_NOT_STARTED);
+    bool missionWasRunning = missionActive;
+    missionActive = false;
     prefs.putBool("missione", false);
     biometricCauseActive = false;  // fine missione: azzera tutte le cause di allarme pendenti
     ppeCauseActive = false;
     missingPpeList = "";
     restrictedAreaCauseActive = false;
-    currentState = STATE_MISSION_NOT_STARTED;  // torna a z0
+    currentState = sensorPresent ? STATE_MISSION_NOT_STARTED : STATE_FAULT;  // torna a z0, o resta in z6 senza sensore
     if (missionWasRunning) {
-      showNotice("MISSIONE FINITA");
+      showNotice("Missione", "terminata");
       pulseVibration(150);
     }
     return;
   }
 
-  // In z0 l'automa reagisce solo all'avvio della missione (evento a).
-  if (currentState == STATE_MISSION_NOT_STARTED) {
+  // Senza missione (z0, oppure z6 col sensore assente) l'automa reagisce solo
+  // all'avvio della missione (evento a).
+  if (!missionActive) {
     Serial.println("[DRONE] ignorato: la missione non e' avviata");
     return;
   }
@@ -579,16 +636,67 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   Serial.println("[DRONE] tipo sconosciuto, ignorato");
 }
 
+// Task del collegamento al broker (vedi brokerConnectRunning): fa solo
+// mqtt.connect(), l'esito lo raccoglie il loop con finishBrokerConnect().
+// Il quarto/quinto/sesto parametro configurano il "Last Will and
+// Testament": se l'orologio si disconnette in modo anomalo, il broker
+// pubblica automaticamente "offline" sul topic di presenza, così il CC
+// se ne accorge anche senza un messaggio esplicito dell'orologio.
+// L'ultimo (false) chiede una sessione persistente: mentre l'orologio e'
+// scollegato, per una caduta di rete o un riavvio, il broker conserva i
+// messaggi del drone (QoS 1) e li consegna al ricollegamento, nell'ordine
+// in cui sono partiti. Senza, un DPI_OK o un AREA_OK inviato a rete
+// caduta andrebbe perso e l'allarme resterebbe acceso. Il broker
+// riconosce la sessione da mqttClientId, che quindi non deve cambiare.
+void brokerConnectTask(void*) {
+  brokerConnectOk = mqtt.connect(mqttClientId.c_str(), NULL, NULL,
+                                 presenceTopic.c_str(), 1, true, "offline", false);
+  brokerConnectFinished = true;
+  vTaskDelete(NULL);
+}
+
+// Raccoglie l'esito del task di collegamento, quando ha finito: da qui mqtt
+// torna al loop.
+void finishBrokerConnect() {
+  if (!brokerConnectRunning || !brokerConnectFinished) return;
+  brokerConnectRunning = false;
+  if (brokerConnectOk) {
+    mqtt.publish(presenceTopic.c_str(), "online", true);
+    mqtt.subscribe(ALARM_TOPIC, 1);  // da qui in poi riceveremo i messaggi del CC su questo topic
+    brokerWritableSinceMs = millis();
+    Serial.println("[RETE] broker collegato, in ascolto dei messaggi del drone");
+  } else {
+    Serial.print("[RETE] Connessione ");
+    Serial.print(describeBrokerStatus());
+    Serial.print(" (codice ");
+    Serial.print(mqtt.state());
+    Serial.println(")");
+  }
+}
+
+// true se la connessione al broker ha posto per altri dati: scrivere quando e'
+// piena fermerebbe il loop (vedi BROKER_STALL_MS). Il controllo non aspetta.
+bool isBrokerWritable() {
+  int fd = wifiClient.fd();
+  if (fd < 0) return false;
+  fd_set writeSet;
+  FD_ZERO(&writeSet);
+  FD_SET(fd, &writeSet);
+  struct timeval noWait = {0, 0};
+  return select(fd + 1, NULL, &writeSet, NULL, &noWait) > 0;
+}
+
 // Gestisce la connessione di rete "a piccoli passi", senza mai bloccare il
 // resto del programma: se il WiFi non è connesso, avvia il tentativo (non
-// bloccante) e ritorna subito; solo se il WiFi è già su, prova anche MQTT.
+// bloccante) e ritorna subito; solo se il WiFi è già su, prova anche MQTT,
+// in un task a parte (brokerConnectTask).
 // Viene richiamata periodicamente dal loop() quando la connessione manca.
 void ensureNetwork() {
   if (WiFi.status() != WL_CONNECTED) {
     // Un tentativo ancora nei tempi si lascia concludere: lo stato 0 indica
     // che l'aggancio al router è riuscito e si attende solo l'indirizzo IP.
     if (wifiAttemptStarted && millis() - wifiAttemptStartMs < WIFI_CONNECT_TIMEOUT_MS) {
-      Serial.print("[RETE] ");
+      Serial.print("[RETE] Connessione ");
       Serial.print(describeWifiStatus());
       Serial.print(" (stato ");
       Serial.print(WiFi.status());
@@ -607,22 +715,12 @@ void ensureNetwork() {
     Serial.print(WiFi.localIP());
     Serial.print(". Collego il broker ");
     Serial.println(MQTT_BROKER_IP);
-    String clientId = String("wg-orologio_") + WORKER_ID;
-    // Il quarto/quinto/sesto parametro configurano il "Last Will and
-    // Testament": se l'orologio si disconnette in modo anomalo, il broker
-    // pubblica automaticamente "offline" sul topic di presenza, così il CC
-    // se ne accorge anche senza un messaggio esplicito dell'orologio.
-    if (mqtt.connect(clientId.c_str(), NULL, NULL,
-                     presenceTopic.c_str(), 1, true, "offline")) {
-      mqtt.publish(presenceTopic.c_str(), "online", true);
-      mqtt.subscribe(ALARM_TOPIC, 1);  // da qui in poi riceveremo i messaggi del CC su questo topic
-      Serial.println("[RETE] broker collegato, in ascolto dei messaggi del drone");
-    } else {
-      Serial.print("[RETE] ");
-      Serial.print(describeBrokerStatus());
-      Serial.print(" (codice ");
-      Serial.print(mqtt.state());
-      Serial.println(")");
+    brokerConnectFinished = false;
+    brokerConnectRunning  = true;
+    // Sul core 0, con lo stack WiFi: il core 1 resta tutto al loop.
+    if (xTaskCreatePinnedToCore(brokerConnectTask, "broker", 6144, NULL, 1, NULL, 0) != pdPASS) {
+      brokerConnectRunning = false;
+      Serial.println("[RETE] collegamento al broker non avviato: memoria insufficiente");
     }
   }
 }
@@ -648,6 +746,7 @@ void setup() {
 
   telemetryTopic = String("cantiere/sensori/orologio/") + WORKER_ID;  // costruisce i nomi dei topic ora che WORKER_ID è noto
   presenceTopic  = String("cantiere/sistema/orologio_") + WORKER_ID + "/status";
+  mqttClientId   = String("wg-orologio_") + WORKER_ID;
   WiFi.mode(WIFI_STA);  // modalità "stazione": si collega a una rete esistente, non ne crea una propria
   // Il core ESP32 rifiuta di default le reti protette con una sicurezza inferiore
   // a WPA2, mentre il router del laboratorio offre solo WPA-PSK (TKIP).
@@ -655,6 +754,10 @@ void setup() {
   mqtt.setServer(MQTT_BROKER_IP, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);  // registra la funzione da chiamare quando arriva un messaggio
   mqtt.setSocketTimeout(2);  // secondi massimi di attesa su operazioni di rete, per non bloccare troppo a lungo
+  // Un messaggio piu' lungo del buffer viene scartato senza conferma e, con la
+  // sessione persistente, il broker lo rimanderebbe a ogni ricollegamento: il
+  // doppio dei 256 byte predefiniti lascia margine agli allarmi del drone.
+  mqtt.setBufferSize(512);
 
   pinMode(PIN_VIBRATION, OUTPUT);
   pinMode(PIN_BUTTON, INPUT_PULLUP);  // pull-up interno: il pin legge HIGH a riposo, LOW quando premuto
@@ -708,14 +811,18 @@ void setup() {
   // ---- Missione: persistenza attraverso i reset (r) ----
   prefs.begin("orologio", false);  // apre lo spazio di memoria permanente chiamato "orologio"
   bool missionWasActive = prefs.getBool("missione", false);  // valore salvato, o false se non esiste ancora
+  missionActive = BYPASS_MISSION_WAIT || missionWasActive;
 
-  // Decide lo stato di partenza: se siamo in modalità test (bypass) o se
-  // la missione era già attiva prima di un eventuale reset, si salta z0 e
-  // si parte direttamente dalla ricerca del segnale (o da STATE_FAULT se il
-  // sensore manca); altrimenti si resta in attesa dell'avvio missione.
+  // Decide lo stato di partenza. Se il sensore non ha risposto a nessun
+  // tentativo si parte da STATE_FAULT, con o senza missione: l'orologio non
+  // deve sembrare pronto. Altrimenti, in modalità test (bypass) o con la
+  // missione già attiva prima di un eventuale reset, si salta z0 e si parte
+  // dalla ricerca del segnale; se no si resta in attesa dell'avvio missione.
   // LCD e LED dello stato scelto li imposta il loop() al primo aggiornamento.
-  if (BYPASS_MISSION_WAIT || missionWasActive) {
-    currentState = sensorPresent ? STATE_SEARCHING_SIGNAL : STATE_FAULT;
+  if (!sensorPresent) {
+    currentState = STATE_FAULT;
+  } else if (missionActive) {
+    currentState = STATE_SEARCHING_SIGNAL;
   } else {
     currentState = STATE_MISSION_NOT_STARTED;
   }
@@ -744,7 +851,7 @@ void setup() {
   unsigned long nowMs = millis();
   lastSpo2SampleMs = lastDisplayUpdateMs = lastFsmUpdateMs = nowMs;
   lastBeatMs = nowMs;
-  lastSensorRetryMs = nowMs;
+  lastSensorRetryMs = lastSensorCheckMs = nowMs;
 }
 
 // ================== LOOP ==================
@@ -760,6 +867,7 @@ void loop() {
 
   handleButton();  // controllato ad OGNI ciclo: serve massima reattività per il debounce
 
+  checkSensorConnection(); // se il sensore agganciato smette di rispondere, lo da' per perso
   retrySensorIfMissing();  // no-op se il sensore è già presente, altrimenti prova a riagganciarlo ogni tanto
 
   unsigned long nowMs = millis();
@@ -783,6 +891,10 @@ void loop() {
   if (nowMs - lastFsmUpdateMs >= FSM_UPDATE_INTERVAL_MS) {
     lastFsmUpdateMs = nowMs;
     readingValid = hrReady && spo2Ready;  // valida solo se ENTRAMBE le catene sono agganciate
+    if (readingValid) {
+      lastValidBpm  = bpm;
+      lastValidSpo2 = spo2;
+    }
     updateFsm();              // fa avanzare la macchina a stati
     if (SERIAL_PLOTTER) printPlotterTelemetry();  // una riga di valori per il Plotter seriale
   }
@@ -799,20 +911,76 @@ void loop() {
   // Quando la connessione manca, il ciclo la ritenta con ensureNetwork() ogni
   // NETWORK_RETRY_INTERVAL_MS. Fra un tentativo e l'altro prosegue con gli
   // altri compiti, pertanto una rete assente non ferma il dispositivo.
-  bool brokerConnected = mqtt.connected();
+  finishBrokerConnect();
+  // Mentre il task di collegamento lavora mqtt e' suo: per il loop il broker
+  // non e' collegato.
+  bool brokerConnected = !brokerConnectRunning && mqtt.connected();
   trackNetwork(brokerConnected);  // avviso sull'LCD se la rete cade (a lungo) o torna
   if (brokerConnected) {
-    mqtt.loop();  // fa "respirare" la libreria MQTT: elabora messaggi in arrivo, mantiene viva la connessione
-    if (nowMs - lastPublishMs >= PUBLISH_INTERVAL_MS) {
-      lastPublishMs = nowMs;
-      publishTelemetry();
+    if (isBrokerWritable()) {
+      brokerWritableSinceMs = millis();
+      mqtt.loop();  // fa "respirare" la libreria MQTT: elabora messaggi in arrivo, mantiene viva la connessione
+      sendPendingBiometricAlarm();
+      if (nowMs - lastPublishMs >= PUBLISH_INTERVAL_MS) {
+        lastPublishMs = nowMs;
+        publishTelemetry();
+      }
+    } else if (millis() - brokerWritableSinceMs >= BROKER_STALL_MS) {
+      // Il broker non svuota piu' il buffer: la connessione e' morta anche se
+      // nessuno l'ha chiusa. Chiuderla qui fa ripartire il ricollegamento.
+      Serial.println("[RETE] il broker non riceve piu' dati, chiudo la connessione");
+      wifiClient.stop();
     }
-  } else if (nowMs - lastNetworkRetryMs >= NETWORK_RETRY_INTERVAL_MS) {
+  } else if (!brokerConnectRunning && nowMs - lastNetworkRetryMs >= NETWORK_RETRY_INTERVAL_MS) {
     lastNetworkRetryMs = nowMs;
     ensureNetwork();
   }
 
   logStateChange();  // ultimo: raccoglie i cambi di stato fatti in qualunque punto del giro
+}
+
+// ================== CONTROLLO SENSORE ==================
+
+// true se il sensore risponde ed e' ancora nella modalita' impostata da
+// pox.begin(). Uno staccato e riattaccato fra due controlli risponde, ma si e'
+// riacceso con la configurazione azzerata e non misura piu' nulla.
+bool isSensorResponding() {
+  Wire.beginTransmission(MAX30100_I2C_ADDRESS);
+  Wire.write(MAX30100_REG_MODE_CONFIGURATION);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(MAX30100_I2C_ADDRESS, 1) != 1) return false;
+  return (Wire.read() & 0x07) == MAX30100_MODE_SPO2_HR;
+}
+
+// Interroga il sensore agganciato ogni SENSOR_CHECK_INTERVAL_MS. Dopo
+// SENSOR_MAX_MISSED_CHECKS risposte mancate lo da' per perso: azzera le
+// letture e lascia a retrySensorIfMissing() il riaggancio.
+void checkSensorConnection() {
+  if (!sensorPresent) return;
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastSensorCheckMs < SENSOR_CHECK_INTERVAL_MS) return;
+  lastSensorCheckMs = nowMs;
+
+  if (isSensorResponding()) {
+    missedSensorChecks = 0;
+    return;
+  }
+  missedSensorChecks++;
+  if (missedSensorChecks < SENSOR_MAX_MISSED_CHECKS) return;
+
+  missedSensorChecks = 0;
+  sensorPresent = false;
+  resetHr();
+  resetSpo2();
+  readingValid = false;
+  lastSensorRetryMs = nowMs;
+  // Senza missione updateFsm() non gira: z6 va impostato qui. In missione ci
+  // pensa l'automa, dopo un eventuale allarme in corso.
+  if (currentState == STATE_MISSION_NOT_STARTED) currentState = STATE_FAULT;
+  Serial.print("[SENSORE] non risponde piu', riprovo ogni ");
+  Serial.print(SENSOR_RETRY_INTERVAL_MS / 1000);
+  Serial.println(" s");
 }
 
 // ================== RITENTATIVO SENSORE IN BACKGROUND ==================
@@ -832,7 +1000,9 @@ void retrySensorIfMissing() {
   if (pox.begin()) {
     configureSensor();
     if (currentState == STATE_FAULT) {
-      currentState = STATE_SEARCHING_SIGNAL;  // evento s: torna a cercare il segnale, non direttamente a STATE_NORMAL
+      // evento s: torna a cercare il segnale, non direttamente a STATE_NORMAL;
+      // fuori missione torna invece in attesa dell'avvio
+      currentState = missionActive ? STATE_SEARCHING_SIGNAL : STATE_MISSION_NOT_STARTED;
     }
     Serial.println("[SENSORE] ricollegato");
   } else {
@@ -893,7 +1063,10 @@ void sampleHr() {
   if (hrBufferCount < 3) return;  // servono almeno 3 campioni prima di dare un risultato
 
   int medianCount = (hrBufferCount % 2 == 0) ? hrBufferCount - 1 : hrBufferCount;  // la mediana vuole un numero dispari di elementi
-  float hrMedian = computeMedian(hrBuffer, medianCount);
+  // Finche' il buffer non e' pieno i campioni stanno in ordine dall'inizio:
+  // si prendono gli ultimi medianCount, i piu' recenti. A buffer pieno
+  // medianCount e' l'intera finestra e lo scostamento vale zero.
+  float hrMedian = computeMedian(hrBuffer + (hrBufferCount - medianCount), medianCount);
 
   // Stadio 2: media mobile esponenziale sopra il valore mediano
   if (!hrReady) {
@@ -924,6 +1097,13 @@ void resetSpo2() {
 void sampleSpo2() {
   spo2Raw = pox.getSpO2();
 
+  // Senza battiti la libreria puo' conservare l'ultima SpO2 calcolata: non e'
+  // una misura, e la catena riparte quando i battiti tornano.
+  if (millis() - lastBeatMs > HR_STALE_TIMEOUT_MS) {
+    resetSpo2();
+    return;
+  }
+
   if (spo2Raw < 70 || spo2Raw > 100) {
     // Fuori range plausibile: tollera qualche lettura anomala consecutiva
     // (rumore/disturbo momentaneo) prima di considerare il dito rimosso
@@ -943,7 +1123,7 @@ void sampleSpo2() {
   if (spo2BufferCount < 3) return;
 
   int medianCount = (spo2BufferCount % 2 == 0) ? spo2BufferCount - 1 : spo2BufferCount;
-  float spo2Median = computeMedian(spo2Buffer, medianCount);
+  float spo2Median = computeMedian(spo2Buffer + (spo2BufferCount - medianCount), medianCount);  // ultimi campioni, come per il battito
 
   if (!spo2Ready) {
     spo2Filtered = spo2Median;
@@ -987,18 +1167,13 @@ bool isWithinExitThresholds() {
   return (bpm >= BPM_MIN_OUT && bpm <= BPM_MAX_OUT && spo2 >= SPO2_MIN_OUT);
 }
 
-// Distingue "dito non presente" da "il sensore ha smesso di funzionare pur
-// con un dito plausibile sopra": true solo nel secondo caso, un guasto vero.
-bool isSensorStuck() {
-  return spo2Ready && (millis() - lastBeatMs > BEAT_FAULT_TIMEOUT_MS);
-}
-
 // La funzione più importante del programma: fa avanzare l'automa di uno
 // "scatto" ogni volta che viene chiamata (ogni 250ms dal loop()),
 // valutando tutte le condizioni ed eventualmente cambiando 'currentState'.
 void updateFsm() {
-  // z0: nulla da fare finche' non arriva "a" (o il bypass di test)
-  if (currentState == STATE_MISSION_NOT_STARTED) return;
+  // Senza missione nulla da fare: in z0 finche' non arriva "a" (o il bypass di
+  // test), in z6 finche' il sensore non risponde (retrySensorIfMissing)
+  if (!missionActive) return;
 
   // Rientro della causa biometrica (isteresi, soglie di uscita)
   if (biometricCauseActive && isWithinExitThresholds()) {
@@ -1037,7 +1212,7 @@ void updateFsm() {
     if (currentState == STATE_ALARM || currentState == STATE_SILENCED) {
       currentState = STATE_NORMAL;
     }
-    if (!sensorPresent || isSensorStuck()) {
+    if (!sensorPresent) {
       currentState = STATE_FAULT;
     } else if (!readingValid) {
       currentState = STATE_SEARCHING_SIGNAL;
@@ -1080,7 +1255,7 @@ void updateFsm() {
       break;
 
     case STATE_FAULT:
-      if (millis() - lastBeatMs <= BEAT_FAULT_TIMEOUT_MS) {
+      if (sensorPresent) {
         currentState = STATE_SEARCHING_SIGNAL;        // evento s
       }
       break;
@@ -1215,7 +1390,7 @@ void restartDevice() {
 
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("RESET in corso");
+  lcd.print("Reset in corso");
   digitalWrite(PIN_LED_RED, HIGH);
   digitalWrite(PIN_LED_GREEN, LOW);
   digitalWrite(PIN_LED_BLUE, LOW);
@@ -1226,14 +1401,17 @@ void restartDevice() {
 
 // ================== I/O ==================
 
-// Mostra un avviso temporaneo: testo sulla prima riga dell'LCD e LED blu
+// Mostra un avviso temporaneo: testo su entrambe le righe dell'LCD e LED blu
 // fisso per NOTICE_MS. LCD e LED si aggiornano subito, senza attendere il
 // prossimo giro periodico.
-void showNotice(const char* text) {
-  noticeText = text;
+void showNotice(const char* line1, const char* line2) {
+  noticeLine1 = line1;
+  noticeLine2 = line2;
   noticeStartMs = millis();
   Serial.print("[AVVISO] ");
-  Serial.println(text);
+  Serial.print(line1);
+  Serial.print(" ");
+  Serial.println(line2);
   updateLcd();
   updateLeds();
 }
@@ -1241,22 +1419,28 @@ void showNotice(const char* text) {
 // true mentre l'avviso temporaneo deve restare visibile. Un allarme ha la
 // precedenza: il pericolo non aspetta che l'avviso finisca.
 bool isNoticeShown() {
-  return noticeText != nullptr
+  return noticeLine1 != nullptr
       && currentState != STATE_ALARM && currentState != STATE_SILENCED
       && millis() - noticeStartMs < NOTICE_MS;
 }
 
-// Segue il collegamento al broker e avvisa quando cade o torna a missione
-// avviata: senza rete l'orologio non riceve gli allarmi del drone e non invia
-// la telemetria. La caduta conta solo dopo NETWORK_LOSS_GRACE_MS; in attesa
-// della missione la mostra gia' la prima riga dell'LCD.
+// true mentre l'LCD deve restare fisso su "Connessione persa", in qualunque
+// stato: da quando la caduta viene data per certa finche' il broker non torna.
+// Prima del primo collegamento non c'e' nulla di perso, e la schermata di z0
+// dice a che punto e' il collegamento.
+bool isNetworkLossShown() {
+  return brokerEverConnected && networkReportedDown;
+}
+
+// Segue il collegamento al broker: senza rete l'orologio non riceve gli
+// allarmi del drone e non invia la telemetria. La caduta conta solo dopo
+// NETWORK_LOSS_GRACE_MS, poi resta segnalata sull'LCD (isNetworkLossShown)
+// finche' il collegamento non torna.
 void trackNetwork(bool brokerConnected) {
   if (brokerConnected) {
     brokerWasConnected = true;
-    if (networkReportedDown) {
-      networkReportedDown = false;
-      if (currentState != STATE_MISSION_NOT_STARTED) showNotice("RETE COLLEGATA");
-    }
+    brokerEverConnected = true;
+    networkReportedDown = false;
     return;
   }
   if (brokerWasConnected) {  // collegamento appena caduto
@@ -1265,18 +1449,21 @@ void trackNetwork(bool brokerConnected) {
   }
   if (!networkReportedDown && millis() - brokerLostSinceMs >= NETWORK_LOSS_GRACE_MS) {
     networkReportedDown = true;
-    if (currentState != STATE_MISSION_NOT_STARTED) showNotice("RETE PERSA");
+    Serial.print("[RETE] connessione persa da ");
+    Serial.print(NETWORK_LOSS_GRACE_MS / 1000);
+    Serial.println(" s");
   }
 }
 
-// Stato del WiFi e del broker a parole, uguali sull'LCD e sul monitor seriale.
-// La corrispondenza con i codici numerici e' in communication_setup.md.
+// Stato del WiFi e del broker a parole: seconda riga dell'LCD sotto
+// "Connessione", e stesso testo sul monitor seriale. Si chiamano solo a
+// collegamento assente. La corrispondenza con i codici numerici e' in
+// communication_setup.md.
 const char* describeWifiStatus() {
   wl_status_t wifi = WiFi.status();
-  if (wifi == WL_CONNECTED)      return "WiFi collegato";
-  if (wifi == WL_NO_SSID_AVAIL)  return "WiFi non trovato";  // router spento o WIFI_SSID errato
-  if (wifi == WL_CONNECT_FAILED) return "Password errata";   // WIFI_PASS diversa da quella del router
-  return "Cerco WiFi...";
+  if (wifi == WL_NO_SSID_AVAIL)  return "assente";          // router spento o WIFI_SSID errato
+  if (wifi == WL_CONNECT_FAILED) return "Password errata";  // WIFI_PASS diversa da quella del router
+  return "in corso...";
 }
 
 const char* describeBrokerStatus() {
@@ -1284,20 +1471,25 @@ const char* describeBrokerStatus() {
   if (broker == MQTT_CONNECT_FAILED || broker == MQTT_CONNECTION_TIMEOUT) {
     return "Broker assente";   // Mosquitto spento, IP sbagliato o firewall
   }
-  return "Cerco broker...";
+  return "al Broker...";
 }
 
-// Prima riga in attesa della missione: dice a che punto e' il collegamento,
+// Seconda riga in attesa della missione: dice a che punto e' il collegamento,
 // cosi' si controlla anche con l'orologio a batteria, senza monitor seriale.
-String buildNetworkStatusText() {
-  // Una caduta breve non cambia la scritta, come per gli avvisi (trackNetwork).
-  if (!networkReportedDown) return "Rete collegata";
+// Dopo il primo collegamento una caduta la segnala "Connessione persa"
+// (isNetworkLossShown), quindi i codici qui servono all'accensione.
+const char* buildNetworkStatusText() {
+  // Una caduta breve non cambia la scritta (trackNetwork).
+  if (!networkReportedDown) return "stabilita";
   if (WiFi.status() != WL_CONNECTED) return describeWifiStatus();
   return describeBrokerStatus();
 }
 
 // Aggiorna il testo mostrato sull'LCD in base allo stato corrente e alle
 // eventuali cause di allarme attive. Chiamata ogni 250ms dal loop().
+// Ogni schermata riempie entrambe le righe, cosi' non restano mai insieme
+// meta' di un testo e meta' di un altro; solo il riscontro del pulsante
+// prende il posto della seconda riga.
 void updateLcd() {
   // Con piu' cause attive insieme si mostra una causa alla volta, a turno:
   // entrambe le righe si riferiscono sempre alla stessa, quindi la causa si
@@ -1308,30 +1500,50 @@ void updateLcd() {
     displayedCauseSinceMs = millis();
   }
 
-  if (isNoticeShown()) {
-    printLcdLine(0, noticeText);  // la seconda riga resta quella dello stato
-  } else if (currentState == STATE_MISSION_NOT_STARTED) {
-    printLcdLine(0, buildNetworkStatusText());
-  } else if (currentState == STATE_ALARM || currentState == STATE_SILENCED) {
-    if (cause == CAUSE_BIOMETRIC) {
-      printLcdLine(0, buildBiometricText());
-    } else if (cause == CAUSE_RESTRICTED_AREA) {
-      printLcdLine(0, "AREA VIETATA!");
-    } else if (cause == CAUSE_PPE) {
-      int count = countMissingPpe();
-      if (count > 1) {
-        printLcdLine(0, String("DPI MANCANTI:") + count);
-      } else {
-        printLcdLine(0, "DPI MANCANTE!");
-      }
-    }
-  } else if (currentState == STATE_FAULT) {
-    printLcdLine(0, "SENSORE GUASTO");
-  } else if (currentState == STATE_SEARCHING_SIGNAL) {
-    printLcdLine(0, "Appoggia il dito");
+  // Priorita': allarme, avviso temporaneo, connessione persa, stato.
+  // Con il sensore guasto e la rete persa insieme le due schermate si
+  // alternano, come le cause di allarme: nessuna delle due nasconde l'altra.
+  bool faultTurn = currentState == STATE_FAULT && (millis() / CAUSE_ROTATION_MS) % 2 == 1;
+  String line1, line2;
+  if (currentState == STATE_ALARM) {
+    buildAlarmLines(cause, line1, line2);
+  } else if (currentState == STATE_SILENCED) {
+    buildAlarmLines(cause, line1, line2);
+    // Lo schermo puo' aggiornarsi poco dopo la scadenza, prima che
+    // l'automa torni in allarme: senza il confronto la sottrazione fra
+    // valori senza segno darebbe un numero enorme.
+    unsigned long silencedMs = millis() - silenceStartMs;
+    unsigned long remainingSec = silencedMs < SILENCE_TIMEOUT_MS ? (SILENCE_TIMEOUT_MS - silencedMs) / 1000 : 0;
+    line2 = String("Silenziato:") + remainingSec + "s";
+  } else if (isNoticeShown()) {
+    line1 = noticeLine1;
+    line2 = noticeLine2;
+  } else if (isNetworkLossShown() && !faultTurn) {
+    line1 = "Connessione";
+    line2 = "persa";
   } else {
-    // STATE_NORMAL o STATE_VERIFYING: mostra i valori correnti
-    printLcdLine(0, buildVitalsText());
+    switch (currentState) {
+      case STATE_MISSION_NOT_STARTED:
+        line1 = "Connessione";
+        line2 = buildNetworkStatusText();
+        break;
+      case STATE_SEARCHING_SIGNAL:
+        line1 = "Appoggia il dito";
+        line2 = "sul sensore";
+        break;
+      case STATE_FAULT:
+        line1 = "Sensore biometr.";
+        line2 = "irraggiungibile";
+        break;
+      case STATE_VERIFYING:
+        line1 = buildVitalsText();
+        line2 = "Controllo valori";
+        break;
+      default:  // STATE_NORMAL
+        line1 = buildVitalsText();
+        line2 = "Valori normali";
+        break;
+    }
   }
 
   unsigned long heldMs = buttonPressed ? (millis() - pressStartMs) : 0;
@@ -1339,28 +1551,13 @@ void updateLcd() {
   if (buttonPressed && heldMs >= 400 && !longPressCounted) {
     // Countdown alla pressione lunga: rilasciando prima si annulla tutto
     int remainingSec = (LONG_PRESS_MS - heldMs + 999) / 1000;
-    printLcdLine(1, String("Tieni premuto:") + remainingSec + "s");
+    line2 = String("Tieni premuto:") + remainingSec + "s";
   } else if (pendingResetPresses == 1) {
-    printLcdLine(1, "Ripeti per reset");
-  } else {
-    switch (currentState) {
-      case STATE_MISSION_NOT_STARTED: printLcdLine(1, "Attesa missione"); break;
-      case STATE_SEARCHING_SIGNAL:    printLcdLine(1, "e resta fermo"); break;
-      case STATE_ALARM:               printLcdLine(1, buildAlarmSecondLine(cause)); break;
-      case STATE_SILENCED: {
-        // Lo schermo puo' aggiornarsi poco dopo la scadenza, prima che
-        // l'automa torni in allarme: senza il confronto la sottrazione fra
-        // valori senza segno darebbe un numero enorme.
-        unsigned long silencedMs = millis() - silenceStartMs;
-        unsigned long remainingSec = silencedMs < SILENCE_TIMEOUT_MS ? (SILENCE_TIMEOUT_MS - silencedMs) / 1000 : 0;
-        printLcdLine(1, String("Silenziato:") + remainingSec + "s");
-        break;
-      }
-      case STATE_VERIFYING: printLcdLine(1, "Controllo valori"); break;
-      case STATE_FAULT:     printLcdLine(1, "Verifica sensore"); break;
-      default:              printLcdLine(1, "Valori normali"); break;
-    }
+    line2 = "Ripeti per reset";
   }
+
+  printLcdLine(0, line1);
+  printLcdLine(1, line2);
 }
 
 // Scrive una riga intera dell'LCD: taglia a 16 caratteri e riempie di spazi
@@ -1382,19 +1579,39 @@ int countMissingPpe() {
   return count;
 }
 
-// Prima riga durante l'allarme biometrico: dice QUALE parametro e' fuori
-// soglia, invece di mostrare due numeri che l'operatore deve interpretare.
-// Se sono fuori entrambi non c'e' spazio per le parole e si mostrano i valori.
-String buildBiometricText() {
+// Righe dell'allarme biometrico: dicono QUALE parametro e' fuori soglia,
+// sopra, e il suo valore, sotto. Se sono fuori entrambi non c'e' spazio per
+// le parole e si mostrano i due valori, uno per riga.
+// Usano l'ultima lettura valida: durante l'allarme lo stato del segnale non
+// si mostra, e una perdita breve non fa alternare la schermata.
+void buildBiometricLines(String& line1, String& line2) {
+  int bpm  = lastValidBpm;
+  int spo2 = lastValidSpo2;
+
   bool hrHigh  = bpm > BPM_MAX_IN;
   bool hrLow   = bpm < BPM_MIN_IN;
   bool spo2Low = spo2 < SPO2_MIN_IN;
+  if (!hrHigh && !hrLow && !spo2Low) {
+    // Zona di isteresi: i valori sono rientrati nelle soglie di ingresso ma
+    // non ancora in quelle di uscita; si nomina il parametro che tiene
+    // acceso l'allarme.
+    hrHigh  = bpm > BPM_MAX_OUT;
+    hrLow   = bpm < BPM_MIN_OUT;
+    spo2Low = spo2 < SPO2_MIN_OUT;
+  }
+  bool hrOut = hrHigh || hrLow;
 
-  if ((hrHigh || hrLow) && spo2Low) return buildVitalsText();
-  if (hrHigh)  return String("BATTITO ALTO:") + bpm;
-  if (hrLow)   return String("BATTITO BASSO:") + bpm;
-  if (spo2Low) return String("SpO2 BASSA:") + spo2 + "%";
-  return buildVitalsText();
+  if (hrOut && !spo2Low) {
+    line1 = hrHigh ? "Battito alto:" : "Battito basso:";
+    line2 = String(bpm) + " bpm";
+  } else if (spo2Low && !hrOut) {
+    line1 = "SpO2 bassa:";
+    line2 = String(spo2) + " %";
+  } else {
+    // Fuori entrambi, o appena rientrati nel giro prima che l'allarme cessi
+    line1 = String("Battito: ") + bpm + " bpm";
+    line2 = String("SpO2: ") + spo2 + " %";
+  }
 }
 
 // Battito e saturazione su una riga: BPM a sinistra, SpO2 allineata a destra.
@@ -1468,12 +1685,24 @@ String getScrollWindow(const String& text) {
   return window.substring(0, LCD_COLUMNS);
 }
 
-// Seconda riga durante l'allarme: dice all'operatore cosa fare. Per i DPI
-// mostra l'elenco di cosa manca, che scorre se non ci sta.
-String buildAlarmSecondLine(int cause) {
-  if (cause == CAUSE_RESTRICTED_AREA) return "ALLONTANARSI";
-  if (cause == CAUSE_BIOMETRIC)       return "Fermati e riposa";
-  return getScrollWindow(missingPpeList);
+// Righe dell'allarme per la causa a schermo: il pericolo sopra, sotto cosa
+// fare o il dettaglio. Per i DPI la seconda riga e' l'elenco di cosa manca,
+// che scorre se non ci sta.
+void buildAlarmLines(int cause, String& line1, String& line2) {
+  if (cause == CAUSE_BIOMETRIC) {
+    buildBiometricLines(line1, line2);
+  } else if (cause == CAUSE_RESTRICTED_AREA) {
+    line1 = "Area vietata !!";
+    line2 = "Allontanarsi";
+  } else if (cause == CAUSE_PPE) {
+    int count = countMissingPpe();
+    if (count > 1) {
+      line1 = String(count) + " DPI assenti";
+    } else {
+      line1 = "DPI assente !!";
+    }
+    line2 = getScrollWindow(missingPpeList);
+  }
 }
 
 // Accende o spegne il motore secondo il ritmo della causa a schermo. Viene

@@ -69,6 +69,21 @@ class AlarmLatch:
     def reset(self) -> None:
         self._states.clear()
 
+    def begin_observation(self, now: Optional[float] = None) -> None:
+        # Inizio di una nuova sosta, dopo un tratto in cui il drone non ha
+        # osservato. Gli allarmi ancora accesi restano accesi e la tolleranza di
+        # rientro riparte da adesso, invece che dall'ultima conferma ormai
+        # lontana: si spengono solo se la nuova sosta non li vede più. I
+        # conteggi rimasti a metà riguardano un'altra scena e si azzerano.
+        if now is None:
+            now = self._now()
+        for key, state in list(self._states.items()):
+            if state.alarm_active:
+                state.last_true_at = float(now)
+                state.last_was_true = False
+            else:
+                del self._states[key]
+
     def is_active(self, key: str) -> bool:
         state = self._states.get(key)
         return state is not None and state.alarm_active

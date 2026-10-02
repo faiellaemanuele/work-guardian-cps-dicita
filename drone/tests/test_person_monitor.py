@@ -134,6 +134,48 @@ def test_crossing_not_emitted_outside_supervision():
     assert m.update(detections_by_model=snap, supervision_active=False) == []
 
 
+def test_area_alarm_is_not_cleared_when_the_stop_ends():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    crossing = _snapshot((_FALL_MODEL, [("Person", _PERSON)]), (_RECT_MODEL, [("rect", _RECT_OVERLAP)]))
+    assert _types(m.update(detections_by_model=crossing, supervision_active=True)) == {"restricted_area"}
+    for _ in range(5):
+        clk.advance(1.0)
+        assert m.update(detections_by_model=[], supervision_active=False) == []
+
+
+def test_next_stop_clears_the_area_alarm_only_after_the_grace():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    crossing = _snapshot((_FALL_MODEL, [("Person", _PERSON)]), (_RECT_MODEL, [("rect", _RECT_OVERLAP)]))
+    m.update(detections_by_model=crossing, supervision_active=True)
+    clk.advance(30.0)
+    m.update(detections_by_model=[], supervision_active=False)
+    assert m.update(detections_by_model=[], supervision_active=True) == []
+    clk.advance(1.1)
+    assert _types(m.update(detections_by_model=[], supervision_active=True)) == {"restricted_area_ok"}
+
+
+def test_area_alarm_still_seen_at_next_stop_is_not_repeated():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    crossing = _snapshot((_FALL_MODEL, [("Person", _PERSON)]), (_RECT_MODEL, [("rect", _RECT_OVERLAP)]))
+    m.update(detections_by_model=crossing, supervision_active=True)
+    clk.advance(30.0)
+    m.update(detections_by_model=[], supervision_active=False)
+    assert m.update(detections_by_model=crossing, supervision_active=True) == []
+
+
+def test_fall_rearms_at_the_next_stop():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    fall = _snapshot((_FALL_MODEL, [("Fall", _PERSON)]))
+    assert _types(m.update(detections_by_model=fall, supervision_active=True)) == {"fall"}
+    clk.advance(5.0)
+    m.update(detections_by_model=[], supervision_active=False)
+    assert _types(m.update(detections_by_model=fall, supervision_active=True)) == {"fall"}
+
+
 def test_no_crossing_without_rect():
     m = _monitor()
     snap = _snapshot((_FALL_MODEL, [("Person", _PERSON)]))

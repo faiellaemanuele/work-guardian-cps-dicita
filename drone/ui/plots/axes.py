@@ -95,6 +95,17 @@ def ordered_legend(ax, priority: dict, **legend_kwargs):
     ax.legend([h for h, _ in pairs], [l for _, l in pairs], **legend_kwargs)
 
 
+def draw_each(builders, data, plt, logger) -> None:
+    # I grafici sono indipendenti: uno che va in errore viene registrato e
+    # chiuso, e si passa al successivo invece di perdere anche gli altri.
+    for build in builders:
+        try:
+            build(data)
+        except Exception:
+            logger.exception("Non è stato possibile generare il grafico %s", build.__name__)
+            plt.close("all")
+
+
 def figure_saver(output_dir: Path, save_dpi: int, saved_paths: list, plt):
     def save_figure(fig, filename: str) -> Path:
         path = output_dir / filename

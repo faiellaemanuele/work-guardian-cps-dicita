@@ -6,6 +6,8 @@ from pathlib import Path
 from drone.config.measurements import (
     CAMERA_MATRIX,
     DIST_COEFFS,
+    FLIGHT_AREA_X_M,
+    FLIGHT_AREA_Y_M,
     RESTRICTED_AREAS_RAW,
     SITE_AREA_VERTICES_M,
     WORLD_TAGS_RAW,
@@ -185,7 +187,9 @@ class AprilTagAutopilotConfig:
     z_priority_exit_m: float = 0.22
     z_priority_keep_yaw: bool = True
 
-    pose_timeout_sec: float = 3.0
+    # Quanto si aspetta che i marker tornino, a drone fermo, prima di
+    # disattivare l'autopilota. Conta dopo pose_valid_for_sec di AppConfig.
+    pose_timeout_sec: float = 5.0
     waypoint_timeout_enabled: bool = True
     waypoint_timeout_sec: float = 60.0
 
@@ -195,6 +199,11 @@ class AprilTagAutopilotConfig:
 
     home_waypoint: AutopilotWaypointConfig | None = None
     auto_land_on_finish: bool = True
+
+    # Muri della stanza (x e y, in metri): una posizione stimata oltre i muri
+    # ferma il volo autonomo. None disattiva il controllo.
+    flight_area_x_m: tuple[float, float] | None = None
+    flight_area_y_m: tuple[float, float] | None = None
 
     def __post_init__(self):
         for name, value in (
@@ -235,7 +244,7 @@ class SmartwatchThresholdsConfig:
     # wearable/smartwatch/smartwatch.ino): l'allarme lo decide l'orologio, qui
     # servono solo a disegnarle nei grafici biometrici e a colorare di rosso i
     # valori fuori soglia nel pannello dell'orologio. Se cambiano lì, vanno
-    # cambiate anche qui.
+    # cambiate anche qui: test_smartwatch_thresholds.py lo controlla.
     bpm_min_in: int = 30
     bpm_max_in: int = 120
     spo2_min_in: int = 92
@@ -256,7 +265,10 @@ class AppConfig:
     project_title: str = PROJECT_TITLE
 
     frame_from_controller_is_rgb: bool = True
-    frame_timeout_sec: float = 3.0
+    # Senza immagini nuove per questo tempo il volo si chiude e il drone
+    # atterra. Nel frattempo il drone resta fermo: dopo pose_valid_for_sec la
+    # posizione non è più valida e l'autopilota smette di muoverlo.
+    frame_timeout_sec: float = 10.0
     video_fade_in_sec: float = 0.25
     status_refresh_sec: float = 1.0
     pose_valid_for_sec: float = 1.0
@@ -303,6 +315,11 @@ class AppConfig:
     site_area_vertices_m: tuple[tuple[float, float], ...] = field(
         default_factory=lambda: SITE_AREA_VERTICES_M
     )
+    flight_area_x_m: tuple[float, float] = FLIGHT_AREA_X_M
+    flight_area_y_m: tuple[float, float] = FLIGHT_AREA_Y_M
+    # Distanza minima dei waypoint dai muri: un percorso che ne mette uno più
+    # vicino viene scartato al caricamento.
+    flight_area_wall_margin_m: float = 0.3
     restricted_areas_vertices_m: tuple[tuple[tuple[float, float], ...], ...] = field(
         default_factory=lambda: tuple(
             _rectangle_vertices(area["center_m"], area["size_m"])
@@ -360,6 +377,38 @@ class AppConfig:
                 f"alarm_clear_after_sec ({self.alarm_clear_after_sec}) non può "
                 "essere negativo: è una durata in secondi."
             )
+        # I tre tempi della perdita del video scattano in quest'ordine: prima
+        # l'autopilota smette di muovere il drone, poi si disattiva, e solo
+        # dopo, se il video non torna, il volo si chiude con l'atterraggio.
+        pose_timeout_sec = self.apriltag_autopilot.pose_timeout_sec
+        if self.pose_valid_for_sec <= 0 or pose_timeout_sec <= 0:
+            raise ValueError(
+                f"pose_valid_for_sec ({self.pose_valid_for_sec}) e "
+                f"apriltag_autopilot.pose_timeout_sec ({pose_timeout_sec}) devono "
+                "essere positivi."
+            )
+        if self.frame_timeout_sec <= self.pose_valid_for_sec + pose_timeout_sec:
+            raise ValueError(
+                f"frame_timeout_sec ({self.frame_timeout_sec}) deve essere maggiore di "
+                f"pose_valid_for_sec + apriltag_autopilot.pose_timeout_sec "
+                f"({self.pose_valid_for_sec} + {pose_timeout_sec}): l'autopilota deve "
+                "disattivarsi prima che il volo si chiuda per il video assente."
+            )
+        if self.flight_area_wall_margin_m < 0:
+            raise ValueError(
+                f"flight_area_wall_margin_m ({self.flight_area_wall_margin_m}) non può "
+                "essere negativo: è una distanza in metri."
+            )
+        for name, (low, high) in (
+            ("flight_area_x_m", self.flight_area_x_m),
+            ("flight_area_y_m", self.flight_area_y_m),
+        ):
+            if high - low <= 2 * self.flight_area_wall_margin_m:
+                raise ValueError(
+                    f"{name} ({low}, {high}) deve essere più ampio del doppio di "
+                    f"flight_area_wall_margin_m ({self.flight_area_wall_margin_m}): "
+                    "altrimenti nessun waypoint potrebbe stare lontano dai muri."
+                )
 
 
 APP_CONFIG = AppConfig()

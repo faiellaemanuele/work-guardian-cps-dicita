@@ -552,7 +552,7 @@ def test_l_evento_di_allarme_non_sostituisce_la_telemetria():
 def test_la_taratura_arriva_tutta_dalla_configurazione():
     config = replace(
         APP_CONFIG,
-        frame_timeout_sec=3.5,
+        frame_timeout_sec=12.5,
         frame_from_controller_is_rgb=False,
         status_refresh_sec=0.25,
         pose_valid_for_sec=0.75,
@@ -565,7 +565,7 @@ def test_la_taratura_arriva_tutta_dalla_configurazione():
 
     ciclo = VisionLoop(config=config, detectors=[], pose_estimator=None)
 
-    assert ciclo.frame_timeout_sec == 3.5
+    assert ciclo.frame_timeout_sec == 12.5
     assert ciclo.frame_from_controller_is_rgb is False
     assert ciclo.status_refresh_sec == 0.25
     assert ciclo.pose_valid_for_sec == 0.75

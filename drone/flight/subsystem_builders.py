@@ -126,6 +126,8 @@ def create_apriltag_autopilot(
                 0.0 if supervision_stop_sec is None else float(supervision_stop_sec)
             ),
             home_waypoint=home_waypoint,
+            flight_area_x_m=APP_CONFIG.flight_area_x_m,
+            flight_area_y_m=APP_CONFIG.flight_area_y_m,
         )
 
         return AprilTagAutopilot(autopilot_cfg)

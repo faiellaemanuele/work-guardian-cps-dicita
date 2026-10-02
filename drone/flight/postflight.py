@@ -49,6 +49,51 @@ def _export_biometric_session(biometric_logger) -> None:
         LOGGER.exception("Non è stato possibile salvare i dati degli orologi")
 
 
+def _export_flight_session(subsystems: Subsystems) -> None:
+    flight_data_logger = subsystems.flight_data_logger
+    if flight_data_logger is None:
+        return
+
+    if _landed_by_pilot(subsystems):
+        print_step(
+            "--",
+            "Il pilota ha fatto atterrare il drone con il controller: i dati del volo "
+            "non vengono salvati",
+        )
+        return
+
+    try:
+        if flight_data_logger.has_data():
+            session_dir = flight_data_logger.export_session(
+                output_root=APP_CONFIG.flight_sessions_dir,
+                app_config=APP_CONFIG,
+                path_name=subsystems.scenario_name,
+            )
+
+            if session_dir is not None:
+                print_step(
+                    "OK",
+                    "La sessione di volo è stata salvata nella cartella "
+                    f"{_project_relative(session_dir)}",
+                )
+            else:
+                print_step(
+                    "!!",
+                    "Non è stato possibile creare la cartella della sessione: "
+                    "i dati del volo non sono stati salvati",
+                )
+
+            for riga in flight_data_logger.get_summary().splitlines():
+                print_step("--", riga)
+        else:
+            print_step(
+                "--",
+                "Non è stata registrata alcuna posizione: nessun file è stato salvato",
+            )
+    except Exception:
+        LOGGER.exception("Non è stato possibile salvare i dati del volo")
+
+
 def release_mission(subsystems: Subsystems) -> None:
     controller = subsystems.controller
     if controller is not None:
@@ -56,6 +101,13 @@ def release_mission(subsystems: Subsystems) -> None:
             controller.send_rc_control(0, 0, 0, 0)
         except Exception:
             pass
+
+    # Il logger sta per essere sostituito da quello del nuovo scenario: i dati
+    # di questo volo si salvano adesso, con le stesse regole della chiusura.
+    flight_data_logger = subsystems.flight_data_logger
+    if flight_data_logger is not None and flight_data_logger.has_data():
+        log_phase("Chiusura dello scenario")
+        _export_flight_session(subsystems)
 
     vision_loop = subsystems.vision_loop
     if vision_loop is not None:
@@ -121,43 +173,7 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
     if flight_data_logger is not None or has_biometric_data:
         log_phase("Chiusura della sessione")
 
-    if flight_data_logger is not None and _landed_by_pilot(subsystems):
-        print_step(
-            "--",
-            "Il pilota ha fatto atterrare il drone con il controller: i dati del volo "
-            "non vengono salvati",
-        )
-    elif flight_data_logger is not None:
-        try:
-            if flight_data_logger.has_data():
-                session_dir = flight_data_logger.export_session(
-                    output_root=APP_CONFIG.flight_sessions_dir,
-                    app_config=APP_CONFIG,
-                    path_name=subsystems.scenario_name,
-                )
-
-                if session_dir is not None:
-                    print_step(
-                        "OK",
-                        "La sessione di volo è stata salvata nella cartella "
-                        f"{_project_relative(session_dir)}",
-                    )
-                else:
-                    print_step(
-                        "!!",
-                        "Non è stato possibile creare la cartella della sessione: "
-                        "i dati del volo non sono stati salvati",
-                    )
-
-                for riga in flight_data_logger.get_summary().splitlines():
-                    print_step("--", riga)
-            else:
-                print_step(
-                    "--",
-                    "Non è stata registrata alcuna posizione: nessun file è stato salvato",
-                )
-        except Exception:
-            LOGGER.exception("Non è stato possibile salvare i dati del volo")
+    _export_flight_session(subsystems)
 
     # I dati degli orologi riguardano la salute degli operai, non il volo: si
     # salvano anche quando il pilota scarta i dati del volo atterrando a mano.
