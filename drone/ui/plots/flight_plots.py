@@ -7,7 +7,7 @@ from drone.data.flight_report_stats import entries_with_pose
 
 LOGGER = logging.getLogger(__name__)
 
-# Un orologio pubblica due campioni al secondo: con meno di due non c'è una
+# L'orologio pubblica due campioni al secondo: con meno di due non c'è una
 # linea da disegnare.
 _MIN_BIOMETRIC_SAMPLES = 2
 
@@ -62,11 +62,7 @@ def save_biometric_plots(logger, output_dir: str | Path) -> list[Path]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    workers = [
-        worker for worker in logger.workers()
-        if len(logger.samples(worker)) >= _MIN_BIOMETRIC_SAMPLES
-    ]
-    if not workers:
+    if len(logger.samples()) < _MIN_BIOMETRIC_SAMPLES:
         LOGGER.info("Grafici biometrici non generati: campioni insufficienti.")
         return []
 
@@ -74,16 +70,6 @@ def save_biometric_plots(logger, output_dir: str | Path) -> list[Path]:
     if plt is None:
         return []
 
-    from drone.ui.plots.biometric_plots import save_worker_biometric_plots
+    from drone.ui.plots.biometric_plots import save_watch_biometric_plots
 
-    saved_paths: list[Path] = []
-    # Con un solo orologio i nomi dei file restano quelli fissi; con più
-    # orologi ognuno porta l'identificativo dell'operaio.
-    tag_files = len(workers) > 1
-    for worker in workers:
-        saved_paths.extend(
-            save_worker_biometric_plots(
-                logger, worker, output_dir, plt, tag_files=tag_files,
-            )
-        )
-    return saved_paths
+    return save_watch_biometric_plots(logger, output_dir, plt)

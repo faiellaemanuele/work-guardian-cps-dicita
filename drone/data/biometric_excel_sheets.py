@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import time
 from typing import Any, Callable, Optional
 
@@ -72,19 +71,7 @@ _STAT_LABELS = {
 
 _STAT_COLUMNS = ["hr_grezzo", "hr_filtrato", "spo2_grezzo", "spo2_filtrato"]
 
-# Caratteri che Excel non accetta nel nome di un foglio, più il limite di 31.
-_INVALID_SHEET_CHARS = re.compile(r"[\\/*?:\[\]]")
-_MAX_SHEET_NAME = 31
-
-
-def worker_label(worker: str, *, single: bool) -> str:
-    # È previsto un solo operaio: il suo identificativo compare solo se gli
-    # orologi collegati sono più di uno.
-    return "Orologio" if single else f"Orologio {worker}"
-
-
-def sheet_name(label: str) -> str:
-    return _INVALID_SHEET_CHARS.sub("-", label)[:_MAX_SHEET_NAME]
+SAMPLES_SHEET = "Orologio"
 
 
 def _delta(filtered: Any, raw: Any) -> Optional[float]:
@@ -117,23 +104,18 @@ def _sample_columns(
 
 
 def _alarm_columns(
-    thresholds, clock: tuple[str, float], *, include_worker: bool
+    thresholds, clock: tuple[str, float]
 ) -> list[tuple[str, Callable, Optional[str]]]:
-    columns: list[tuple[str, Callable, Optional[str]]] = [
+    return [
         ("Orario", lambda e: as_clock(e["timestamp"]), FMT_TIME),
         ("Tempo dall'avvio [s]", lambda e: relative_time(e, clock), FMT_S),
-    ]
-    if include_worker:
-        columns.append(("Orologio", lambda e: e.get("operaio", ""), None))
-    columns.extend([
         ("Battito [bpm]", lambda e: e.get("bpm"), FMT_BPM),
         ("SpO2 [%]", lambda e: e.get("spo2"), FMT_SPO2),
         ("Causa", lambda e: alarm_cause_label(e, thresholds), None),
-    ])
-    return columns
+    ]
 
 
-def write_worker_sheet(ws: Worksheet, samples, thresholds, clock) -> None:
+def write_samples_sheet(ws: Worksheet, samples, thresholds, clock) -> None:
     write_data_sheet(
         ws,
         samples,
@@ -147,12 +129,8 @@ def write_worker_sheet(ws: Worksheet, samples, thresholds, clock) -> None:
     )
 
 
-def write_alarms_sheet(
-    ws: Worksheet, events, thresholds, clock, *, include_worker: bool
-) -> None:
-    write_data_sheet(
-        ws, events, _alarm_columns(thresholds, clock, include_worker=include_worker)
-    )
+def write_alarms_sheet(ws: Worksheet, events, thresholds, clock) -> None:
+    write_data_sheet(ws, events, _alarm_columns(thresholds, clock))
 
 
 def _write_overview(ws: Worksheet, row: int, samples, titolo: str) -> int:
@@ -312,26 +290,17 @@ def write_summary_sheet(ws: Worksheet, logger, thresholds) -> None:
     subtitle.font = SUBTITLE_FONT
     row = 4
 
-    workers = logger.workers()
-    single = len(workers) <= 1
-    for worker in workers:
-        samples = logger.samples(worker)
-        if not samples:
-            continue
-        prefisso = "" if single else f"{worker_label(worker, single=False)} — "
-
-        row = _write_overview(ws, row, samples, f"{prefisso}Panoramica")
+    samples = logger.samples()
+    if samples:
+        row = _write_overview(ws, row, samples, "Panoramica")
         row = _write_outcome(
-            ws, row, samples, logger.events(worker), thresholds,
-            f"{prefisso}Esito del monitoraggio",
+            ws, row, samples, logger.events(), thresholds, "Esito del monitoraggio"
         )
-        row = _write_state_table(
-            ws, row, samples, f"{prefisso}Tempo per stato dell'orologio"
-        )
+        row = _write_state_table(ws, row, samples, "Tempo per stato dell'orologio")
 
         stats = column_stats(samples, _STAT_COLUMNS)
         if stats:
-            row = section_title(ws, row, f"{prefisso}Valori registrati", span=5)
+            row = section_title(ws, row, "Valori registrati", span=5)
             row = write_stats_table(
                 ws, row, stats,
                 labels=_STAT_LABELS,
@@ -339,10 +308,9 @@ def write_summary_sheet(ws: Worksheet, logger, thresholds) -> None:
             )
             row += 1
         row = _write_filter_section(
-            ws, row, samples,
-            f"{prefisso}Filtro dell'orologio (mediana + media mobile)",
+            ws, row, samples, "Filtro dell'orologio (mediana + media mobile)"
         )
-        row = _write_gaps_section(ws, row, samples, f"{prefisso}Buchi nella telemetria")
+        row = _write_gaps_section(ws, row, samples, "Buchi nella telemetria")
 
     autofit_columns(ws)
 
@@ -365,15 +333,16 @@ _LEGEND_SAMPLES = [
 _LEGEND_ALARMS = [
     ("Orario", "Ora in cui l'orologio ha confermato l'allarme biometrico."),
     ("Tempo dall'avvio [s]", "Secondi trascorsi dal primo campione della sessione: lo stesso tempo delle altre schede."),
-    ("Orologio", "Identificativo dell'operaio che portava l'orologio (compare solo con più orologi collegati)."),
     ("Battito [bpm]", "Battito al momento della conferma dell'allarme."),
     ("SpO2 [%]", "Saturazione al momento della conferma dell'allarme."),
     ("Causa", "Quale dei due valori era fuori soglia quando l'allarme è stato confermato."),
 ]
 
 
-def write_legend_sheet(ws: Worksheet, *, sample_sheets: list[str], include_alarms: bool) -> None:
-    blocks = [(f"Foglio «{nome}»", _LEGEND_SAMPLES) for nome in sample_sheets]
+def write_legend_sheet(ws: Worksheet, *, include_samples: bool, include_alarms: bool) -> None:
+    blocks = []
+    if include_samples:
+        blocks.append((f"Foglio «{SAMPLES_SHEET}»", _LEGEND_SAMPLES))
     if include_alarms:
         blocks.append(("Foglio «Allarmi»", _LEGEND_ALARMS))
     write_legend_blocks(ws, blocks, name_width=30, meaning_width=86)

@@ -28,7 +28,7 @@ def _plt():
 def _dati():
     from drone.ui.plots.biometric_plots import _prepare
     with tempfile.TemporaryDirectory() as d:
-        return _prepare(logger_con_sessione(), "operaio_1", Path(d), _plt(), [])
+        return _prepare(logger_con_sessione(), Path(d), _plt(), [])
 
 
 def test_il_tempo_parte_da_zero_e_le_serie_restano_appaiate():
@@ -105,15 +105,14 @@ def test_senza_valori_grezzi_i_grafici_nascono_lo_stesso():
     if not _matplotlib_available():
         return
     from drone.data.biometric_data_logger import BiometricDataLogger
-    from drone.ui.plots.biometric_plots import save_worker_biometric_plots
+    from drone.ui.plots.biometric_plots import save_watch_biometric_plots
     log = BiometricDataLogger()
     for i in range(10):
         log.log_message(
-            "operaio_1",
             {"bpm": 70 + i, "spo2": 97, "stato": "NORMALE", "lettura_valida": True},
             timestamp=100.0 + i * 0.5,
         )
     with tempfile.TemporaryDirectory() as d:
-        salvati = save_worker_biometric_plots(log, "operaio_1", Path(d), _plt())
+        salvati = save_watch_biometric_plots(log, Path(d), _plt())
         assert all(p.exists() for p in salvati)
     assert len(salvati) == 4

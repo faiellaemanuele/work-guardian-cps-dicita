@@ -16,7 +16,6 @@ from drone.data.biometric_report_stats import (
     STATE_LABELS as _STATE_LABELS,
     alarm_causes,
     format_duration as _format_duration,
-    safe_worker_name as _safe_worker,
 )
 from drone.data.flight_report_stats import duration_key
 from drone.ui.plots.axes import (
@@ -58,7 +57,6 @@ _STATE_COLORS = {
 class _Data:
     plt: object
     save_figure: Callable
-    worker: str
     t: np.ndarray
     hr_raw: np.ndarray
     hr_filtered: np.ndarray
@@ -70,7 +68,6 @@ class _Data:
     spo2_alarm_times: np.ndarray
     duration: float
     meta: str
-    filenames: dict
 
 
 def _series(samples, key: str) -> np.ndarray:
@@ -116,10 +113,9 @@ def _alarm_legend_label(parameter: str, labels: list[str]) -> str:
     return f"Allarmi {parameter} ({shown})"
 
 
-def _prepare(logger, worker: str, output_dir: Path, plt, saved_paths: list,
-             *, tag_files: bool = False) -> _Data:
-    samples = logger.samples(worker)
-    events = logger.events(worker)
+def _prepare(logger, output_dir: Path, plt, saved_paths: list) -> _Data:
+    samples = logger.samples()
+    events = logger.events()
 
     key = duration_key(list(samples) + list(events))
     base = float(samples[0][key])
@@ -153,18 +149,9 @@ def _prepare(logger, worker: str, output_dir: Path, plt, saved_paths: list,
         if spo2_cause:
             spo2_alarm_times.append(when)
 
-    filenames = dict(_FILENAMES)
-    if tag_files:
-        tag = _safe_worker(worker)
-        filenames = {
-            name: filename.replace("biometria_", f"biometria_{tag}_", 1)
-            for name, filename in filenames.items()
-        }
-
     return _Data(
         plt=plt,
         save_figure=figure_saver(output_dir, _SAVE_DPI, saved_paths, plt),
-        worker=worker,
         t=t,
         hr_raw=hr_raw, hr_filtered=hr_filtered,
         spo2_raw=spo2_raw, spo2_filtered=spo2_filtered,
@@ -173,7 +160,6 @@ def _prepare(logger, worker: str, output_dir: Path, plt, saved_paths: list,
         spo2_alarm_times=np.array(spo2_alarm_times, dtype=np.float64),
         duration=duration,
         meta=meta,
-        filenames=filenames,
     )
 
 
@@ -245,7 +231,7 @@ def _hr_comparison(data: _Data) -> None:
         data, raw=data.hr_raw, filtered=data.hr_filtered,
         ylabel="Battito [bpm]", unit="bpm",
         title="Battito cardiaco: grezzo vs filtrato",
-        filename=data.filenames["hr_comparison"],
+        filename=_FILENAMES["hr_comparison"],
     )
 
 
@@ -254,7 +240,7 @@ def _spo2_comparison(data: _Data) -> None:
         data, raw=data.spo2_raw, filtered=data.spo2_filtered,
         ylabel="SpO2 [%]", unit="%",
         title="Saturazione (SpO2): grezza vs filtrata",
-        filename=data.filenames["spo2_comparison"],
+        filename=_FILENAMES["spo2_comparison"],
     )
 
 
@@ -405,7 +391,7 @@ def _hr_session(data: _Data) -> None:
         alarm_times=data.hr_alarm_times, alarm_prefix="BPM",
         alarm_subject="sul battito",
         title="Andamento del battito cardiaco nella sessione",
-        filename=data.filenames["hr_session"],
+        filename=_FILENAMES["hr_session"],
     )
 
 
@@ -428,16 +414,15 @@ def _spo2_session(data: _Data) -> None:
         alarm_times=data.spo2_alarm_times, alarm_prefix="SpO2",
         alarm_subject="sulla saturazione",
         title="Andamento della saturazione (SpO2) nella sessione",
-        filename=data.filenames["spo2_session"],
+        filename=_FILENAMES["spo2_session"],
     )
 
 
-def save_worker_biometric_plots(logger, worker: str, output_dir: Path, plt,
-                                *, tag_files: bool = False) -> list[Path]:
+def save_watch_biometric_plots(logger, output_dir: Path, plt) -> list[Path]:
     saved_paths: list[Path] = []
-    data = _prepare(logger, worker, output_dir, plt, saved_paths, tag_files=tag_files)
+    data = _prepare(logger, output_dir, plt, saved_paths)
 
     draw_each((_hr_comparison, _spo2_comparison, _hr_session, _spo2_session), data, plt, LOGGER)
 
-    LOGGER.info("Grafici biometrici di %s salvati in %s", worker, output_dir)
+    LOGGER.info("Grafici biometrici salvati in %s", output_dir)
     return saved_paths

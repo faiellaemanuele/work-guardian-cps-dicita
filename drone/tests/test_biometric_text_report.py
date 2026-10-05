@@ -15,9 +15,9 @@ from biometric_log_samples import logger_con_sessione, telemetria
 def _testo(log=None) -> str:
     log = log if log is not None else logger_con_sessione()
     with tempfile.TemporaryDirectory() as d:
-        paths = log.save_all_text_files(d, app_config=APP_CONFIG)
-        assert paths
-        return paths[0].read_text(encoding="utf-8")
+        path = log.save_text_file(d, app_config=APP_CONFIG)
+        assert path is not None
+        return path.read_text(encoding="utf-8")
 
 
 def _righe_dati(testo: str) -> list[list[str]]:
@@ -31,7 +31,7 @@ def _righe_dati(testo: str) -> list[list[str]]:
 def test_the_csv_has_a_row_per_sample_with_every_column():
     log = logger_con_sessione()
     righe = _righe_dati(_testo(log))
-    assert len(righe) == len(log.samples("operaio_1"))
+    assert len(righe) == len(log.samples())
     assert all(len(riga) == 12 for riga in righe)
 
 
@@ -76,9 +76,7 @@ def test_the_footer_reports_the_session_the_states_and_the_gaps():
 def test_without_alarms_the_alarm_section_is_left_out():
     log = BiometricDataLogger()
     for i in range(6):
-        log.log_message(
-            "operaio_1", telemetria(74.0, 72.0, 98.0, 97.0), timestamp=1000.0 + 0.5 * i
-        )
+        log.log_message(telemetria(74.0, 72.0, 98.0, 97.0), timestamp=1000.0 + 0.5 * i)
     testo = _testo(log)
     assert "Panoramica della sessione" in testo
     assert "Allarmi biometrici confermati dall'orologio: 0" in testo
@@ -86,15 +84,12 @@ def test_without_alarms_the_alarm_section_is_left_out():
     assert "Buchi nella telemetria" not in testo
 
 
-def test_with_two_watches_every_one_has_its_own_file():
-    log = logger_con_sessione(operai=("operaio_1", "operaio_2"))
+def test_the_text_file_has_a_fixed_name_and_title():
     with tempfile.TemporaryDirectory() as d:
-        paths = log.save_all_text_files(d, app_config=APP_CONFIG)
-    nomi = sorted(p.name for p in paths)
-    assert nomi == [
-        "biometria_log_orologio_operaio_1.txt",
-        "biometria_log_orologio_operaio_2.txt",
-    ]
+        path = logger_con_sessione().save_text_file(d, app_config=APP_CONFIG)
+        assert path is not None
+        assert path.name == BiometricDataLogger.TEXT_FILENAME
+        assert "LOG BIOMETRICO DELL'OROLOGIO\n" in path.read_text(encoding="utf-8")
 
 
 def _run_all() -> int:

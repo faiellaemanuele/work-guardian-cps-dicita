@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from openpyxl import Workbook
 
 from drone.data.biometric_excel_sheets import (
-    sheet_name,
-    worker_label,
+    SAMPLES_SHEET,
     write_alarms_sheet,
     write_legend_sheet,
     write_parameters_sheet,
+    write_samples_sheet,
     write_summary_sheet,
-    write_worker_sheet,
 )
 from drone.data.biometric_report_stats import (
     MAX_GAP_SEC,
@@ -27,29 +26,16 @@ def collect_session_parameters(
     logger, app_config
 ) -> list[tuple[str, list[tuple[str, str]]]]:
     soglie = app_config.smartwatch_thresholds
-    workers = logger.workers()
-    single = len(workers) <= 1
+    samples = logger.samples()
 
     telemetria = [
-        ("Orologi collegati", str(len(workers)) if workers else "—"),
         ("Cadenza attesa di pubblicazione", f"{fmt_num_it(NOMINAL_STEP_SEC, 1)} s"),
     ]
-    for worker in workers:
-        samples = logger.samples(worker)
-        if not samples:
-            continue
-        etichetta = (
-            "Cadenza misurata nella sessione" if single
-            else f"Cadenza misurata ({worker_label(worker, single=False)})"
-        )
+    if samples:
         telemetria.append(
-            (etichetta, f"{fmt_num_it(sample_step_sec(samples), 2)} s")
+            ("Cadenza misurata nella sessione", f"{fmt_num_it(sample_step_sec(samples), 2)} s")
         )
-        campioni = (
-            "Campioni ricevuti" if single
-            else f"Campioni ricevuti ({worker_label(worker, single=False)})"
-        )
-        telemetria.append((campioni, str(len(samples))))
+        telemetria.append(("Campioni ricevuti", str(len(samples))))
     telemetria.append(
         ("Silenzio oltre il quale si conta un buco", f"{fmt_num_it(MAX_GAP_SEC, 1)} s")
     )
@@ -72,26 +58,14 @@ def collect_session_parameters(
     ]
 
 
-def _alarm_rows(logger) -> list[dict[str, Any]]:
-    righe: list[dict[str, Any]] = []
-    for worker in logger.workers():
-        for evento in logger.events(worker):
-            righe.append({**evento, "operaio": worker})
-    righe.sort(key=lambda e: float(e["timestamp"]))
-    return righe
-
-
 def _build_workbook(
     logger,
     thresholds,
     parameters: Optional[list[tuple[str, list[tuple[str, str]]]]] = None,
 ) -> Workbook:
-    workers = [worker for worker in logger.workers() if logger.samples(worker)]
-    single = len(workers) <= 1
-    allarmi = _alarm_rows(logger)
-    clock = session_clock(
-        *(logger.samples(worker) for worker in workers), allarmi
-    )
+    samples = logger.samples()
+    allarmi = logger.events()
+    clock = session_clock(samples, allarmi)
 
     wb = Workbook()
     summary_ws = wb.active
@@ -101,23 +75,17 @@ def _build_workbook(
     if parameters:
         write_parameters_sheet(wb.create_sheet("Parametri"), parameters)
 
-    nomi_fogli: list[str] = []
-    for worker in workers:
-        nome = sheet_name(worker_label(worker, single=single))
-        nomi_fogli.append(nome)
-        write_worker_sheet(
-            wb.create_sheet(nome), logger.samples(worker), thresholds, clock
+    if samples:
+        write_samples_sheet(
+            wb.create_sheet(SAMPLES_SHEET), samples, thresholds, clock
         )
 
     if allarmi:
-        write_alarms_sheet(
-            wb.create_sheet("Allarmi"), allarmi, thresholds, clock,
-            include_worker=not single,
-        )
+        write_alarms_sheet(wb.create_sheet("Allarmi"), allarmi, thresholds, clock)
 
     write_legend_sheet(
         wb.create_sheet("Legenda"),
-        sample_sheets=nomi_fogli,
+        include_samples=bool(samples),
         include_alarms=bool(allarmi),
     )
 

@@ -29,8 +29,7 @@ VIDEO_WINDOW_TITLE = APP_CONFIG.video_window_title
 
 MQTT_TOPIC_ALARMS = "cantiere/allarmi"
 MQTT_TOPIC_STATUS = "cantiere/sistema/drone/status"
-MQTT_TOPIC_WATCHES = "cantiere/sensori/orologio/+"
-MQTT_WATCH_TOPIC_PREFIX = "cantiere/sensori/orologio/"
+MQTT_TOPIC_WATCH = "cantiere/sensori/orologio"
 WATCH_BIOMETRIC_EVENT = BIOMETRIC_ALARM_EVENT
 MQTT_OFFLINE_WAIT_SEC = 1.0
 
@@ -92,7 +91,7 @@ def update_watch_mission(flying: bool) -> None:
 def _on_mqtt_connect(client, *_args) -> None:
     try:
         client.publish(MQTT_TOPIC_STATUS, "online", qos=1, retain=True)
-        client.subscribe(MQTT_TOPIC_WATCHES)
+        client.subscribe(MQTT_TOPIC_WATCH)
     except Exception:
         LOGGER.warning("Non è stato possibile comunicare al broker che il drone è in linea", exc_info=True)
     # A ogni collegamento, anche dopo una caduta del broker, lo stato della
@@ -108,7 +107,7 @@ def _on_mqtt_message(_client, _userdata, message) -> None:
     # pubblica quando va in allarme biometrico, poiché le soglie e la
     # decisione appartengono al firmware.
     global _watch_live
-    if not message.topic.startswith(MQTT_WATCH_TOPIC_PREFIX):
+    if message.topic != MQTT_TOPIC_WATCH:
         return
     try:
         evento = json.loads(message.payload.decode("utf-8"))
@@ -122,18 +121,17 @@ def _on_mqtt_message(_client, _userdata, message) -> None:
             "bpm": evento.get("bpm"),
             "spo2": evento.get("spo2"),
         }
-    operaio = message.topic[len(MQTT_WATCH_TOPIC_PREFIX):]
     biometric_logger = _biometric_logger
     if biometric_logger is not None:
         try:
-            biometric_logger.log_message(operaio, evento)
+            biometric_logger.log_message(evento)
         except Exception:
             LOGGER.warning("Non è stato possibile registrare il messaggio dell'orologio", exc_info=True)
     if evento.get("evento") != WATCH_BIOMETRIC_EVENT:
         return
     bpm = evento.get("bpm")
     spo2 = evento.get("spo2")
-    print_event(f"{operaio}: {bpm} bpm, SpO2 {spo2}%", prefix="AVVISO", channel="alert")
+    print_event(f"Orologio: {bpm} bpm, SpO2 {spo2}%", prefix="AVVISO", channel="alert")
 
 
 def get_watch_status() -> dict:

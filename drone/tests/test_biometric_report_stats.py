@@ -13,7 +13,6 @@ from drone.data.biometric_report_stats import (
     format_duration,
     monitored_duration_sec,
     relative_time,
-    safe_worker_name,
     sample_step_sec,
     session_clock,
     state_durations,
@@ -28,7 +27,7 @@ _SOGLIE = APP_CONFIG.smartwatch_thresholds
 
 
 def _campioni():
-    return logger_con_sessione().samples("operaio_1")
+    return logger_con_sessione().samples()
 
 
 def test_the_measured_step_is_the_median_and_ignores_the_gap():
@@ -84,8 +83,8 @@ def test_the_alarm_cause_comes_from_the_values_of_the_event():
 
 def test_the_session_clock_starts_from_the_first_of_all_the_entries():
     log = logger_con_sessione()
-    campioni = log.samples("operaio_1")
-    eventi = log.events("operaio_1")
+    campioni = log.samples()
+    eventi = log.events()
     clock = session_clock(campioni, eventi)
     assert relative_time(campioni[0], clock) == 0.0
     # l'allarme cade dopo venticinque campioni e i dieci secondi di silenzio
@@ -97,12 +96,6 @@ def test_the_duration_is_written_in_minutes_only_when_it_is_worth_it():
     assert format_duration(45.4) == "45 s"
     assert format_duration(60) == "1 min"
     assert format_duration(930) == "15 min 30 s"
-
-
-def test_the_worker_id_becomes_a_usable_file_name():
-    assert safe_worker_name("operaio_1") == "operaio_1"
-    assert safe_worker_name("operaio/1 bis") == "operaio_1_bis"
-    assert safe_worker_name("***") == "orologio"
 
 
 def _run_all() -> int:

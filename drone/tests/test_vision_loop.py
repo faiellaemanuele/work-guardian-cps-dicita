@@ -508,7 +508,7 @@ def _orologio_mai_sentito():
 
 def _telemetria_orologio(bpm, spo2, valida=True):
     return _MessaggioMqtt(
-        "cantiere/sensori/orologio/operaio_1",
+        "cantiere/sensori/orologio",
         {"bpm": bpm, "spo2": spo2, "stato": "NORMALE", "lettura_valida": valida},
     )
 
@@ -541,7 +541,7 @@ def test_l_evento_di_allarme_non_sostituisce_la_telemetria():
     with _orologio_mai_sentito() as modulo:
         modulo._on_mqtt_message(None, None, _telemetria_orologio(74, 97))
         evento = _MessaggioMqtt(
-            "cantiere/sensori/orologio/operaio_1",
+            "cantiere/sensori/orologio",
             {"bpm": 131, "spo2": 95, "evento": "BIOMETRIA_ANOMALA"},
         )
         with _alert_catturati():
@@ -656,13 +656,13 @@ def _sessione_biometrica():
 def test_la_telemetria_dell_orologio_finisce_nella_sessione_biometrica():
     with _sessione_biometrica() as modulo:
         telemetria = _MessaggioMqtt(
-            "cantiere/sensori/orologio/operaio_1",
+            "cantiere/sensori/orologio",
             {"bpm": 78, "spo2": 97, "stato": "NORMALE", "lettura_valida": True,
              "hr_grezzo": 81.5, "hr_filtrato": 78.2,
              "spo2_grezzo": 96.0, "spo2_filtrato": 97.3},
         )
         evento = _MessaggioMqtt(
-            "cantiere/sensori/orologio/operaio_1",
+            "cantiere/sensori/orologio",
             {"bpm": 131, "spo2": 95, "evento": "BIOMETRIA_ANOMALA"},
         )
         with _alert_catturati():
@@ -671,10 +671,10 @@ def test_la_telemetria_dell_orologio_finisce_nella_sessione_biometrica():
         log = modulo.take_biometric_logger()
 
     assert log is not None
-    campioni = log.samples("operaio_1")
+    campioni = log.samples()
     assert len(campioni) == 1
     assert campioni[0]["hr_grezzo"] == 81.5
-    assert len(log.events("operaio_1")) == 1
+    assert len(log.events()) == 1
 
 
 def test_la_sessione_biometrica_si_consegna_una_volta_sola():
@@ -689,7 +689,7 @@ def test_senza_sessione_aperta_la_telemetria_non_si_registra_e_non_rompe():
     modulo = sys.modules["drone.perception.vision_loop"]
     modulo.take_biometric_logger()
     telemetria = _MessaggioMqtt(
-        "cantiere/sensori/orologio/operaio_1",
+        "cantiere/sensori/orologio",
         {"bpm": 78, "spo2": 97, "stato": "NORMALE", "lettura_valida": True},
     )
     with _alert_catturati() as catturati:
@@ -818,7 +818,7 @@ def _alert_catturati():
         modulo.print_event = originale
 
 
-def test_all_avvio_il_drone_ascolta_gli_orologi():
+def test_all_avvio_il_drone_ascolta_l_orologio():
     modulo = sys.modules["drone.perception.vision_loop"]
 
     class _Client(_ClientMqtt):
@@ -831,7 +831,7 @@ def test_all_avvio_il_drone_ascolta_gli_orologi():
 
     client = _Client()
     modulo._on_mqtt_connect(client)
-    assert client.iscrizioni == ["cantiere/sensori/orologio/+"]
+    assert client.iscrizioni == ["cantiere/sensori/orologio"]
 
 
 @contextlib.contextmanager
@@ -956,7 +956,7 @@ def test_la_chiusura_a_missione_gia_finita_non_ripete_la_fine():
 def test_l_allarme_biometrico_dell_orologio_entra_nel_log_degli_alert():
     modulo = sys.modules["drone.perception.vision_loop"]
     messaggio = _MessaggioMqtt(
-        "cantiere/sensori/orologio/operaio_1",
+        "cantiere/sensori/orologio",
         {"bpm": 131, "spo2": 95, "evento": "BIOMETRIA_ANOMALA"},
     )
     with _alert_catturati() as catturati:
@@ -964,14 +964,14 @@ def test_l_allarme_biometrico_dell_orologio_entra_nel_log_degli_alert():
 
     assert len(catturati) == 1
     testo, opzioni = catturati[0]
-    assert testo == "operaio_1: 131 bpm, SpO2 95%"
+    assert testo == "Orologio: 131 bpm, SpO2 95%"
     assert opzioni["channel"] == "alert"
 
 
 def test_la_telemetria_dell_orologio_non_entra_nel_log_degli_alert():
     modulo = sys.modules["drone.perception.vision_loop"]
     telemetria = _MessaggioMqtt(
-        "cantiere/sensori/orologio/operaio_1",
+        "cantiere/sensori/orologio",
         {"bpm": 131, "spo2": 95, "stato": "ALLARME", "lettura_valida": True},
     )
     with _alert_catturati() as catturati:
@@ -984,7 +984,7 @@ def test_un_messaggio_illeggibile_dell_orologio_viene_ignorato():
     for payload in (b"{non json", b"\xff\xfe", json.dumps([1, 2]).encode("utf-8")):
         with _alert_catturati() as catturati:
             modulo._on_mqtt_message(
-                None, None, _MessaggioMqtt("cantiere/sensori/orologio/operaio_1", payload)
+                None, None, _MessaggioMqtt("cantiere/sensori/orologio", payload)
             )
         assert catturati == []
 

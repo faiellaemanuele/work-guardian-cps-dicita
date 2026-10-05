@@ -55,7 +55,7 @@ def test_the_watch_sheet_has_a_row_per_sample_and_translates_the_state():
         return
     log = logger_con_sessione()
     ws = _workbook(log)["Orologio"]
-    assert ws.max_row - 1 == len(log.samples("operaio_1"))
+    assert ws.max_row - 1 == len(log.samples())
     headers = _headers(ws)
     stati = {
         ws.cell(r, headers.index("Stato dell'orologio") + 1).value
@@ -98,7 +98,6 @@ def test_without_alarms_the_workbook_has_no_alarm_sheet():
     log = BiometricDataLogger()
     for i in range(6):
         log.log_message(
-            "operaio_1",
             {
                 "stato": "NORMALE", "lettura_valida": True,
                 "hr_grezzo": 74.0, "hr_filtrato": 72.0,
@@ -111,14 +110,13 @@ def test_without_alarms_the_workbook_has_no_alarm_sheet():
     assert "Orologio" in wb.sheetnames
 
 
-def test_with_two_watches_every_one_has_its_own_sheet():
+def test_the_alarm_sheet_has_no_watch_column():
     if not _openpyxl_available():
         return
-    wb = _workbook(logger_con_sessione(operai=("operaio_1", "operaio_2")))
-    assert "Orologio operaio_1" in wb.sheetnames
-    assert "Orologio operaio_2" in wb.sheetnames
-    # con più orologi gli allarmi portano l'identificativo dell'operaio
-    assert "Orologio" in _headers(wb["Allarmi"])
+    wb = _workbook(logger_con_sessione())
+    assert _headers(wb["Allarmi"]) == [
+        "Orario", "Tempo dall'avvio [s]", "Battito [bpm]", "SpO2 [%]", "Causa",
+    ]
 
 
 def test_the_columns_are_wide_enough_for_their_headers():

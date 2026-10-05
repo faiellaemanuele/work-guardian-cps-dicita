@@ -130,15 +130,15 @@ def _gap_lines(samples) -> list[str]:
     ]
 
 
-def save_worker_data_to_file(logger, worker: str, output_path: Path, thresholds) -> Path:
-    samples = logger.samples(worker)
-    events = logger.events(worker)
+def save_data_to_file(logger, output_path: Path, thresholds) -> Path:
+    samples = logger.samples()
+    events = logger.events()
     clock = session_clock(samples, events)
 
     with Path(output_path).open("w", encoding="utf-8") as f:
         write_header(
             f,
-            title=f"LOG BIOMETRICO DELL'OROLOGIO ({worker})",
+            title="LOG BIOMETRICO DELL'OROLOGIO",
             description=(
                 "telemetria che l'orologio dell'operaio ha pubblicato via MQTT durante "
                 "la sessione, con i valori grezzi del sensore e quelli filtrati dal "

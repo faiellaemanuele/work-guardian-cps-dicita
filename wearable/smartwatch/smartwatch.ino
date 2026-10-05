@@ -195,17 +195,13 @@ bool sensorTestActive = false;
 // (WIFI_SSID, WIFI_PASS, MQTT_BROKER_IP).
 #include "network_config.h"
 const int   MQTT_PORT   = 1883;
-// Il sistema ha un solo orologio, quindi un solo operatore: l'identificativo
-// non serve a distinguere i dispositivi, ma entra nei topic MQTT e il drone
-// lo legge da li' per etichettare telemetria e allarmi biometrici.
-const char* WORKER_ID   = "operaio_1";
 
 WiFiClient   wifiClient;  // connessione di rete "grezza"
 PubSubClient mqtt(wifiClient);  // livello sopra che parla il protocollo MQTT usando quella connessione
 
-String telemetryTopic;  // riempito in setup(), dipende da WORKER_ID
-String presenceTopic;   // riempito in setup(), dipende da WORKER_ID
-const char* ALARM_TOPIC = "cantiere/allarmi";  // canale su cui l'orologio riceve i messaggi del drone
+const char* TELEMETRY_TOPIC = "cantiere/sensori/orologio";         // telemetria e allarmi biometrici verso il drone
+const char* PRESENCE_TOPIC  = "cantiere/sistema/orologio/status";  // "online"/"offline" dell'orologio
+const char* ALARM_TOPIC     = "cantiere/allarmi";  // canale su cui l'orologio riceve i messaggi del drone
 
 const unsigned long PUBLISH_INTERVAL_MS       = 500; // Ogni quanto inviare la telemetria
 const unsigned long NETWORK_RETRY_INTERVAL_MS = 5000;// Ogni quanto ritentare la connessione se caduta
@@ -230,7 +226,7 @@ bool          networkReportedDown = true;   // rete data per assente sull'LCD (a
 // aspetta fino a 3 s il PC e fino a 2 s la risposta, e intanto il loop deve
 // continuare a leggere il sensore, il pulsante e a muovere la vibrazione.
 // Finche' il task lavora, il loop non tocca mqtt.
-String        mqttClientId;                     // riempito in setup(), dipende da WORKER_ID
+const char*   MQTT_CLIENT_ID = "wg-orologio";   // nome con cui il broker riconosce la sessione dell'orologio
 volatile bool brokerConnectRunning  = false;    // task di collegamento in corso
 volatile bool brokerConnectFinished = false;    // il task ha finito, esito da raccogliere
 volatile bool brokerConnectOk       = false;    // esito dell'ultimo tentativo
@@ -463,7 +459,7 @@ void formatValue(char* dest, size_t size, bool present, float value) {
 }
 
 // Costruisce un messaggio JSON con i valori correnti (bpm, spo2, stato) e
-// lo invia al CC sul topic personale di questo operatore. Chiamata
+// lo invia al CC sul topic di telemetria (TELEMETRY_TOPIC). Chiamata
 // periodicamente dal loop(), non solo quando c'è un allarme: è la
 // "telemetria continua" che permette al CC di sapere come sta l'operatore
 // in ogni momento. Se la lettura non è ancora valida, bpm/spo2 vengono
@@ -498,7 +494,7 @@ void publishTelemetry() {
              "{\"bpm\":null,\"spo2\":null,\"stato\":\"%s\",\"lettura_valida\":false,%s}",
              getStateName(), rawFilteredFields);
   }
-  mqtt.publish(telemetryTopic.c_str(), payload);  // invio effettivo del messaggio sul topic
+  mqtt.publish(TELEMETRY_TOPIC, payload);  // invio effettivo del messaggio sul topic
 }
 
 // Evento singolo, inviato una volta all'ingresso in STATE_ALARM per causa
@@ -530,7 +526,7 @@ void sendPendingBiometricAlarm() {
   snprintf(payload, sizeof(payload),
            "{\"bpm\":%d,\"spo2\":%d,\"evento\":\"BIOMETRIA_ANOMALA\"}",
            pendingAlarmBpm, pendingAlarmSpo2);
-  if (mqtt.publish(telemetryTopic.c_str(), payload)) {
+  if (mqtt.publish(TELEMETRY_TOPIC, payload)) {
     biometricAlarmPending = false;
     Serial.println("[ALLARME] avviso inviato al drone");
   }
@@ -664,10 +660,10 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
 // messaggi del drone (QoS 1) e li consegna al ricollegamento, nell'ordine
 // in cui sono partiti. Senza, un DPI_OK o un AREA_OK inviato a rete
 // caduta andrebbe perso e l'allarme resterebbe acceso. Il broker
-// riconosce la sessione da mqttClientId, che quindi non deve cambiare.
+// riconosce la sessione da MQTT_CLIENT_ID, che quindi non deve cambiare.
 void brokerConnectTask(void*) {
-  brokerConnectOk = mqtt.connect(mqttClientId.c_str(), NULL, NULL,
-                                 presenceTopic.c_str(), 1, true, "offline", false);
+  brokerConnectOk = mqtt.connect(MQTT_CLIENT_ID, NULL, NULL,
+                                 PRESENCE_TOPIC, 1, true, "offline", false);
   brokerConnectFinished = true;
   vTaskDelete(NULL);
 }
@@ -678,7 +674,7 @@ void finishBrokerConnect() {
   if (!brokerConnectRunning || !brokerConnectFinished) return;
   brokerConnectRunning = false;
   if (brokerConnectOk) {
-    mqtt.publish(presenceTopic.c_str(), "online", true);
+    mqtt.publish(PRESENCE_TOPIC, "online", true);
     mqtt.subscribe(ALARM_TOPIC, 1);  // da qui in poi riceveremo i messaggi del CC su questo topic
     brokerWritableSinceMs = millis();
     Serial.println("[RETE] broker collegato, in ascolto dei messaggi del drone");
@@ -758,12 +754,8 @@ void configureSensor() {
 void setup() {
   Serial.begin(115200);  // apre la porta seriale per log/telemetria verso il PC
   Serial.println();
-  Serial.print("[AVVIO] Work Guardian, orologio ");
-  Serial.println(WORKER_ID);
+  Serial.println("[AVVIO] Orologio Work Guardian");
 
-  telemetryTopic = String("cantiere/sensori/orologio/") + WORKER_ID;  // costruisce i nomi dei topic ora che WORKER_ID è noto
-  presenceTopic  = String("cantiere/sistema/orologio_") + WORKER_ID + "/status";
-  mqttClientId   = String("wg-orologio_") + WORKER_ID;
   WiFi.mode(WIFI_STA);  // modalità "stazione": si collega a una rete esistente, non ne crea una propria
   // Il core ESP32 rifiuta di default le reti protette con una sicurezza inferiore
   // a WPA2, mentre il router del laboratorio offre solo WPA-PSK (TKIP).

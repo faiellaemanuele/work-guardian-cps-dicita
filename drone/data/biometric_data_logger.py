@@ -24,22 +24,21 @@ def _optional_float(value: Any) -> Optional[float]:
 
 
 class BiometricDataLogger:
-    # Raccoglie la telemetria che gli orologi pubblicano via MQTT (un campione
-    # ogni 0,5 s per operaio) e gli eventi di allarme biometrico. I messaggi
-    # arrivano dal thread di paho, l'esportazione dal thread principale: per
-    # questo ogni accesso passa dal lock.
+    # Raccoglie la telemetria che l'orologio pubblica via MQTT (un campione
+    # ogni 0,5 s) e gli eventi di allarme biometrico. I messaggi arrivano dal
+    # thread di paho, l'esportazione dal thread principale: per questo ogni
+    # accesso passa dal lock.
 
     SESSION_PREFIX = "sessione_biometrica"
 
     def __init__(self, max_samples: Optional[int] = None):
         self._max_samples = None if max_samples is None else max(1, int(max_samples))
         self._lock = threading.Lock()
-        self._samples: dict[str, deque[dict[str, Any]]] = {}
-        self._events: dict[str, list[dict[str, Any]]] = {}
+        self._samples: deque[dict[str, Any]] = deque(maxlen=self._max_samples)
+        self._events: list[dict[str, Any]] = []
 
     def log_message(
         self,
-        worker: str,
         message: Mapping[str, Any],
         timestamp: Optional[float] = None,
     ) -> bool:
@@ -59,7 +58,7 @@ class BiometricDataLogger:
                 "spo2": _optional_float(message.get("spo2")),
             }
             with self._lock:
-                self._events.setdefault(worker, []).append(event)
+                self._events.append(event)
             return True
 
         if "stato" not in message:
@@ -85,30 +84,22 @@ class BiometricDataLogger:
             "spo2_filtrato": spo2_filtered,
         }
         with self._lock:
-            buffer = self._samples.get(worker)
-            if buffer is None:
-                buffer = deque(maxlen=self._max_samples)
-                self._samples[worker] = buffer
-            buffer.append(sample)
+            self._samples.append(sample)
         return True
 
-    def workers(self) -> list[str]:
+    def samples(self) -> list[dict[str, Any]]:
         with self._lock:
-            return sorted(set(self._samples) | set(self._events))
+            return list(self._samples)
 
-    def samples(self, worker: str) -> list[dict[str, Any]]:
+    def events(self) -> list[dict[str, Any]]:
         with self._lock:
-            return list(self._samples.get(worker, ()))
-
-    def events(self, worker: str) -> list[dict[str, Any]]:
-        with self._lock:
-            return list(self._events.get(worker, ()))
+            return list(self._events)
 
     def has_data(self) -> bool:
         with self._lock:
             # Con meno di due campioni non c'è una linea da disegnare: la
             # cartella resterebbe vuota.
-            return any(len(buffer) >= 2 for buffer in self._samples.values())
+            return len(self._samples) >= 2
 
     def save_plots(self, output_dir: str | Path) -> list[Path]:
         from drone.ui.plots import flight_plots
@@ -125,18 +116,12 @@ class BiometricDataLogger:
         from drone.config import APP_CONFIG
         return APP_CONFIG
 
-    def _text_filename(self, worker: str, *, tag_files: bool) -> str:
-        if not tag_files:
-            return self.TEXT_FILENAME
-        from drone.data.biometric_report_stats import safe_worker_name
-        return f"biometria_log_orologio_{safe_worker_name(worker)}.txt"
-
-    def save_all_text_files(
+    def save_text_file(
         self, output_dir: str | Path, *, app_config: Any = None
-    ) -> list[Path]:
+    ) -> Optional[Path]:
         if not self.has_data():
-            LOGGER.info("Nessun dato dagli orologi da esportare nei file di testo.")
-            return []
+            LOGGER.info("Nessun dato dall'orologio da esportare nel file di testo.")
+            return None
 
         from drone.data import biometric_text_report
 
@@ -144,28 +129,13 @@ class BiometricDataLogger:
         output_dir.mkdir(parents=True, exist_ok=True)
         thresholds = self._app_config(app_config).smartwatch_thresholds
 
-        workers = [worker for worker in self.workers() if self.samples(worker)]
-        # Con un solo orologio il nome del file resta quello fisso; con più
-        # orologi ognuno porta l'identificativo dell'operaio.
-        tag_files = len(workers) > 1
-
-        saved_paths: list[Path] = []
-        for worker in workers:
-            try:
-                saved_paths.append(
-                    biometric_text_report.save_worker_data_to_file(
-                        self,
-                        worker,
-                        output_dir / self._text_filename(worker, tag_files=tag_files),
-                        thresholds,
-                    )
-                )
-            except Exception:
-                LOGGER.exception(
-                    "Non è stato possibile salvare il file di testo dell'orologio %s",
-                    worker,
-                )
-        return saved_paths
+        try:
+            return biometric_text_report.save_data_to_file(
+                self, output_dir / self.TEXT_FILENAME, thresholds
+            )
+        except Exception:
+            LOGGER.exception("Non è stato possibile salvare il file di testo dell'orologio")
+            return None
 
     def _save_excel(
         self, session_dir: Path, *, app_config: Any = None
@@ -174,7 +144,7 @@ class BiometricDataLogger:
             from drone.data import biometric_excel_report
         except ImportError:
             LOGGER.info(
-                "openpyxl non disponibile: i dati degli orologi vengono salvati nei "
+                "openpyxl non disponibile: i dati dell'orologio vengono salvati nel "
                 "file di testo. Per avere il file Excel: pip install openpyxl."
             )
             return None
@@ -193,7 +163,7 @@ class BiometricDataLogger:
         except Exception:
             LOGGER.exception(
                 "Non è stato possibile scrivere il file Excel della sessione "
-                "biometrica: vengono salvati i file di testo"
+                "biometrica: viene salvato il file di testo"
             )
             return None
 
@@ -202,7 +172,7 @@ class BiometricDataLogger:
     ) -> Optional[Path]:
         if not self.has_data():
             LOGGER.info(
-                "Nessun dato dagli orologi: la cartella della sessione biometrica "
+                "Nessun dato dall'orologio: la cartella della sessione biometrica "
                 "non viene creata."
             )
             return None
@@ -220,7 +190,7 @@ class BiometricDataLogger:
 
             excel_path = self._save_excel(session_dir, app_config=app_config)
             if excel_path is None:
-                self.save_all_text_files(session_dir, app_config=app_config)
+                self.save_text_file(session_dir, app_config=app_config)
 
             try:
                 self.save_plots(session_dir)
@@ -234,18 +204,13 @@ class BiometricDataLogger:
             return None
 
     def get_summary(self) -> str:
-        righe = []
-        workers = self.workers()
-        for worker in workers:
-            campioni = len(self.samples(worker))
-            allarmi = len(self.events(worker))
-            testo_allarmi = (
-                "nessun allarme biometrico" if allarmi == 0
-                else "1 allarme biometrico" if allarmi == 1
-                else f"{allarmi} allarmi biometrici"
-            )
-            # È previsto un solo operaio: il suo identificativo compare solo se
-            # gli orologi collegati sono più di uno.
-            nome = f"Orologio {worker}" if len(workers) > 1 else "Orologio"
-            righe.append(f"{nome}: {campioni} campioni, {testo_allarmi}")
-        return "\n".join(righe) if righe else "Nessun dato ricevuto dagli orologi"
+        campioni = len(self.samples())
+        allarmi = len(self.events())
+        if campioni == 0 and allarmi == 0:
+            return "Nessun dato ricevuto dall'orologio"
+        testo_allarmi = (
+            "nessun allarme biometrico" if allarmi == 0
+            else "1 allarme biometrico" if allarmi == 1
+            else f"{allarmi} allarmi biometrici"
+        )
+        return f"Orologio: {campioni} campioni, {testo_allarmi}"

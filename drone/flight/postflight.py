@@ -43,12 +43,12 @@ def _export_biometric_session(biometric_logger) -> None:
             print_step(
                 "!!",
                 "Non è stato possibile creare la cartella della sessione biometrica: "
-                "i dati degli orologi non sono stati salvati",
+                "i dati dell'orologio non sono stati salvati",
             )
         for riga in biometric_logger.get_summary().splitlines():
             print_step("--", riga)
     except Exception:
-        LOGGER.exception("Non è stato possibile salvare i dati degli orologi")
+        LOGGER.exception("Non è stato possibile salvare i dati dell'orologio")
 
 
 def _export_flight_session(subsystems: Subsystems) -> None:
@@ -177,7 +177,7 @@ def run_postflight(subsystems: Subsystems, original_stdout) -> None:
 
     _export_flight_session(subsystems)
 
-    # I dati degli orologi riguardano la salute degli operai, non il volo: si
+    # I dati dell'orologio riguardano la salute dell'operatore, non il volo: si
     # salvano anche quando il pilota scarta i dati del volo atterrando a mano.
     if has_biometric_data:
         _export_biometric_session(biometric_logger)

@@ -17,27 +17,25 @@ def telemetria(hr_grezzo, hr_filtrato, spo2_grezzo, spo2_filtrato, stato="NORMAL
     }
 
 
-def logger_con_sessione(operai=("operaio_1",)) -> BiometricDataLogger:
+def logger_con_sessione() -> BiometricDataLogger:
     log = BiometricDataLogger()
-    for operaio in operai:
-        ts = 1000.0
-        for i in range(40):
-            stato = "RICERCA_SEGNALE" if i < 4 else "ALLARME" if 25 <= i < 32 else "NORMALE"
-            hr = None if i < 4 else 72.0 + (60.0 if 25 <= i < 32 else 0.0)
-            spo2 = None if i < 4 else 97.0
-            log.log_message(
-                operaio,
-                telemetria(
-                    None if hr is None else hr + (15.0 if i % 7 == 0 else 1.0),
-                    hr, 98.0, spo2, stato,
-                ),
-                timestamp=ts,
-            )
-            ts += 0.5
-            if i == 20:
-                ts += 10.0  # l'orologio perde il broker per dieci secondi
+    ts = 1000.0
+    for i in range(40):
+        stato = "RICERCA_SEGNALE" if i < 4 else "ALLARME" if 25 <= i < 32 else "NORMALE"
+        hr = None if i < 4 else 72.0 + (60.0 if 25 <= i < 32 else 0.0)
+        spo2 = None if i < 4 else 97.0
         log.log_message(
-            operaio, {"bpm": 132, "spo2": 97, "evento": "BIOMETRIA_ANOMALA"},
-            timestamp=1000.0 + 25 * 0.5 + 10.0,
+            telemetria(
+                None if hr is None else hr + (15.0 if i % 7 == 0 else 1.0),
+                hr, 98.0, spo2, stato,
+            ),
+            timestamp=ts,
         )
+        ts += 0.5
+        if i == 20:
+            ts += 10.0  # l'orologio perde il broker per dieci secondi
+    log.log_message(
+        {"bpm": 132, "spo2": 97, "evento": "BIOMETRIA_ANOMALA"},
+        timestamp=1000.0 + 25 * 0.5 + 10.0,
+    )
     return log

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 
 from drone.data.flight_report_stats import duration_key, elapsed_seconds
@@ -36,12 +35,6 @@ def session_clock(*groups) -> tuple[str, float]:
 def relative_time(entry, clock: tuple[str, float]) -> float:
     chiave, base = clock
     return float(entry[chiave]) - base
-
-
-def safe_worker_name(worker: str) -> str:
-    # L'identificativo dell'operaio finisce nei nomi dei file: resta solo
-    # quello che un nome di file accetta su ogni sistema.
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", str(worker)).strip("_") or "orologio"
 
 
 def state_label(code: Any) -> str:
