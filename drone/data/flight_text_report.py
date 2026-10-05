@@ -1,102 +1,25 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from drone.data.flight_report_stats import (
-    column_stats,
     elapsed_seconds,
     filter_divergence,
-    is_circular_yaw_column,
     join_tag_ids,
     percent_within,
     rms,
-    total_duration_sec,
     values_of,
     waypoint_groups,
 )
-
-
-def _format_bool(value: Any) -> str:
-    return "true" if bool(value) else "false"
-
-
-def _safe_text_value(value: Any) -> str:
-    if value is None:
-        return ""
-    s = str(value).replace("\n", " ").replace("\r", " ").strip()
-    if s[:1] in ("=", "+", "-", "@"):
-        s = "'" + s
-    if "," in s or '"' in s:
-        s = '"' + s.replace('"', '""') + '"'
-    return s
-
-
-def _format_optional_float(value: Optional[float], precision: int = 3) -> str:
-    if value is None:
-        return ""
-    return f"{float(value):.{precision}f}"
-
-
-def _format_optional_int(value: Optional[int]) -> str:
-    if value is None:
-        return ""
-    return str(int(value))
-
-
-def _write_text_header(
-    file_obj,
-    *,
-    title: str,
-    description: str,
-    columns: list[tuple[str, str]],
-    tag_ids_separator: str,
-):
-    file_obj.write("# =============================================================================\n")
-    file_obj.write(f"# {title}\n")
-    file_obj.write("# =============================================================================\n")
-    file_obj.write(f"# Descrizione: {description}\n")
-    file_obj.write(f"# Generato il: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-    file_obj.write("# Formato dati: tabella CSV testuale con separatore ','\n")
-    file_obj.write("# Nota: le righe che iniziano con '#' sono commenti descrittivi.\n")
-    file_obj.write(f"# Separatore degli ID AprilTag multipli: '{tag_ids_separator}'\n")
-    file_obj.write("#\n")
-    file_obj.write("# Legenda colonne:\n")
-    for column_name, column_description in columns:
-        file_obj.write(f"# - {column_name}: {column_description}\n")
-    file_obj.write("# =============================================================================\n")
-    file_obj.write("\n")
-
-
-def _write_text_footer(
-    file_obj,
-    *,
-    entries: list,
-    numeric_columns: list[str],
-):
-    if not entries:
-        return
-    durata = total_duration_sec(entries)
-    file_obj.write("\n")
-    file_obj.write("# =============================================================================\n")
-    file_obj.write(f"# Statistiche sessione  (campioni: {len(entries)})\n")
-    if len(entries) >= 2:
-        file_obj.write(f"# Durata: {durata:.1f} s\n")
-    has_circular_yaw = False
-    for col, minimo, massimo, mean_value, _scarto in column_stats(entries, numeric_columns):
-        has_circular_yaw = has_circular_yaw or is_circular_yaw_column(col)
-        file_obj.write(
-            f"# {col}: min={minimo:.4f}"
-            f"  max={massimo:.4f}"
-            f"  media={mean_value:.4f}\n"
-        )
-    if has_circular_yaw:
-        file_obj.write(
-            "# Nota: per le colonne di yaw assoluto min/max sono estremi del "
-            "wrap-around +/-180 deg, non l'ampiezza reale; la media e' circolare.\n"
-        )
-    file_obj.write("# =============================================================================\n")
+from drone.data.text_tables import (
+    format_bool as _format_bool,
+    format_optional_float as _format_optional_float,
+    format_optional_int as _format_optional_int,
+    safe_text_value as _safe_text_value,
+    write_header as _write_text_header,
+    write_stats_footer as _write_text_footer,
+)
 
 
 def _write_autopilot_extended_stats(
@@ -235,7 +158,7 @@ def save_comparison_data_to_file(logger, output_path: Path) -> Path:
                 "a partire dalle misure grezze degli AprilTag."
             ),
             columns=columns,
-            tag_ids_separator=separator,
+            notes=[f"Separatore degli ID AprilTag multipli: '{separator}'"],
         )
 
         f.write(",".join(column_name for column_name, _ in columns) + "\n")
@@ -322,7 +245,7 @@ def save_autopilot_data_to_file(logger, output_path: Path) -> Path:
                 "waypoint attivo, distanze dal target, comandi RC e stato della missione."
             ),
             columns=columns,
-            tag_ids_separator=separator,
+            notes=[f"Separatore degli ID AprilTag multipli: '{separator}'"],
         )
 
         f.write(",".join(column_name for column_name, _ in columns) + "\n")

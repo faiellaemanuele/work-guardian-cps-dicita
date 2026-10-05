@@ -86,7 +86,7 @@ class _BiometricLogger:
     def has_data(self):
         return self._dati
 
-    def export_session(self, output_root):
+    def export_session(self, output_root, **kwargs):
         self._registro.passi.append("export_biometrico")
         return None
 

@@ -17,7 +17,14 @@
 // STATI:
 //   z0 STATE_MISSION_NOT_STARTED - connesso (o in attesa di esserlo) al CC, la
 //      missione non e' ancora iniziata. Il ciclo di monitoraggio non e'
-//      attivo; l'LCD mostra lo stato del collegamento.
+//      attivo; l'LCD mostra lo stato del collegamento. Una pressione breve
+//      del pulsante accende qui la PROVA DEL SENSORE biometrico: l'LCD
+//      mostra battito e saturazione, o "Appoggia il dito" in attesa della
+//      lettura, esattamente come in missione, senza bisogno del drone ne'
+//      della rete (la prova ha la precedenza anche su "Connessione persa").
+//      Una seconda pressione breve la spegne, e l'avvio della missione la
+//      chiude da se'. L'automa resta comunque in z0: le soglie non vengono
+//      valutate e nessun allarme biometrico parte verso il CC.
 //   z1 STATE_SEARCHING_SIGNAL - missione attiva, sensore non ancora agganciato.
 //   z2 STATE_NORMAL - lettura valida, parametri nella norma.
 //   z3 STATE_VERIFYING - condizione critica rilevata, in attesa di conferma
@@ -103,7 +110,9 @@
 //
 // PULSANTE (unico comando, il RESET della scheda non e' accessibile a
 // contenitore chiuso):
-//   - pressione BREVE          -> silenzia l'allarme (evento m)
+//   - pressione BREVE          -> silenzia l'allarme (evento m); fuori
+//                                 missione accende o spegne la prova del
+//                                 sensore biometrico (vedi z0 qui sopra)
 //   - DUE pressioni LUNGHE     -> riavvio del dispositivo (evento r)
 //
 // NOMENCLATURA EVENTI ALLINEATA AGLI ALTRI AUTOMI DEL SISTEMA (drone/CC):
@@ -173,6 +182,13 @@ Preferences prefs; // oggetto che verrà utilizzato per accedere alla memoria pe
 // Missione in corso. Di solito equivale a "stato diverso da z0", ma senza
 // sensore l'orologio resta in z6 anche fuori missione.
 bool missionActive = false;
+
+// ---------- Prova del sensore fuori missione ----------
+// Acceso dal pulsante in z0: fa mostrare sull'LCD la lettura biometrica anche
+// senza missione e senza rete, per controllare il sensore al banco o a inizio
+// turno. Non e' uno stato dell'automa e non sposta 'currentState': il sensore
+// e' gia' campionato dal loop() in ogni stato, qui cambia solo cosa si vede.
+bool sensorTestActive = false;
 
 // ---------- Rete e canale MQTT ----------
 // Rete WiFi e indirizzo del broker si impostano in network_config.h
@@ -578,6 +594,7 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     prefs.putBool("missione", true);  // salvato in memoria permanente: sopravvive a un reset (r)
     if (!missionActive) {
       missionActive = true;
+      sensorTestActive = false;  // da qui in poi vale il monitoraggio vero, non la prova
       if (currentState == STATE_MISSION_NOT_STARTED) {
         currentState = STATE_SEARCHING_SIGNAL;  // z0 -> z1; senza sensore si resta in z6
       }
@@ -1328,7 +1345,8 @@ void handleButton() {
         // partire la finestra di attesa della seconda.
         lastLongPressEndMs = millis();
       } else {
-        // pressione breve: silenzia l'allarme, se in corso
+        // pressione breve: silenzia l'allarme, se in corso; fuori missione
+        // accende o spegne la prova del sensore biometrico
         pendingResetPresses = 0;
         if (currentState == STATE_ALARM) {
           currentState = STATE_SILENCED;             // evento m
@@ -1338,6 +1356,8 @@ void handleButton() {
           Serial.println(" s");
           updateLeds();  // aggiorna subito l'uscita, senza aspettare il prossimo ciclo di updateLeds() periodico
           updateLcd();
+        } else if (!missionActive) {
+          toggleSensorTest();
         } else {
           Serial.println("[PULSANTE] pressione breve: nessun allarme da silenziare");
         }
@@ -1369,6 +1389,31 @@ void handleButton() {
       (millis() - lastLongPressEndMs > RESET_SEQUENCE_WINDOW_MS)) {
     pendingResetPresses = 0;
     Serial.println("[PULSANTE] riavvio annullato: la seconda pressione lunga non e' arrivata");
+  }
+}
+
+// Accende o spegne la prova del sensore biometrico fuori missione (z0), su
+// pressione breve del pulsante. Il sensore viene letto e filtrato dal loop()
+// in qualunque stato, quindi qui non c'e' nulla da avviare: cambia solo cosa
+// mostra l'LCD (updateLcd) e il riscontro dei LED (updateLeds). L'automa
+// resta in z0, percio' le soglie non vengono valutate e nessun allarme
+// biometrico parte verso il CC: la prova serve a vedere i valori, non a
+// sorvegliare l'operatore.
+void toggleSensorTest() {
+  if (!sensorTestActive && !sensorPresent) {
+    // Non c'e' nulla da provare, e l'LCD lo sta gia' dicendo (z6)
+    Serial.println("[PULSANTE] pressione breve: prova sensore non disponibile, sensore assente");
+    return;
+  }
+
+  sensorTestActive = !sensorTestActive;
+  Serial.print("[PULSANTE] pressione breve: prova sensore ");
+  Serial.println(sensorTestActive ? "attivata" : "disattivata");
+  // showNotice aggiorna subito LCD e LED, senza attendere il giro periodico
+  if (sensorTestActive) {
+    showNotice("Sensore biometr.", "attivo");
+  } else {
+    showNotice("Prova sensore", "terminata");
   }
 }
 
@@ -1518,14 +1563,20 @@ void updateLcd() {
   } else if (isNoticeShown()) {
     line1 = noticeLine1;
     line2 = noticeLine2;
-  } else if (isNetworkLossShown() && !faultTurn) {
+  } else if (isNetworkLossShown() && !faultTurn && !sensorTestActive) {
+    // La prova del sensore e' stata pensata proprio per funzionare senza
+    // rete: finche' e' accesa prende il posto di questa schermata.
     line1 = "Connessione";
     line2 = "persa";
   } else {
     switch (currentState) {
       case STATE_MISSION_NOT_STARTED:
-        line1 = "Connessione";
-        line2 = buildNetworkStatusText();
+        if (sensorTestActive) {
+          buildSensorTestLines(line1, line2);
+        } else {
+          line1 = "Connessione";
+          line2 = buildNetworkStatusText();
+        }
         break;
       case STATE_SEARCHING_SIGNAL:
         line1 = "Appoggia il dito";
@@ -1622,6 +1673,21 @@ String buildVitalsText() {
   String line = String("BPM:") + bpm + " ";
   while (line.length() + spo2Text.length() < LCD_COLUMNS) line += ' ';
   return line + spo2Text;
+}
+
+// Righe della prova del sensore fuori missione: gli stessi testi della
+// missione attiva - "Appoggia il dito" di z1 finche' la lettura non si
+// aggancia, poi battito e saturazione come in z2. La seconda riga dice "Prova
+// sensore" e non "Valori normali": fuori missione le soglie non vengono
+// valutate, quindi la schermata non puo' promettere che i valori siano a posto.
+void buildSensorTestLines(String& line1, String& line2) {
+  if (readingValid) {
+    line1 = buildVitalsText();
+    line2 = "Prova sensore";
+  } else {
+    line1 = "Appoggia il dito";
+    line2 = "sul sensore";
+  }
 }
 
 // Ordine di gravita' deciso per il progetto: un parametro vitale fuori soglia
@@ -1742,7 +1808,14 @@ void updateLeds() {
     case STATE_MISSION_NOT_STARTED:
       digitalWrite(PIN_LED_RED, LOW);
       digitalWrite(PIN_LED_BLUE, LOW);
-      digitalWrite(PIN_LED_GREEN, (millis() / 1000) % 2);   // lampeggio lento, 1s
+      if (sensorTestActive) {
+        // Durante la prova il LED da' lo stesso riscontro della missione:
+        // lampeggio veloce mentre cerca il segnale (come z1), verde fisso a
+        // lettura agganciata (come z2).
+        digitalWrite(PIN_LED_GREEN, readingValid ? HIGH : (millis() / 500) % 2);
+      } else {
+        digitalWrite(PIN_LED_GREEN, (millis() / 1000) % 2); // lampeggio lento, 1s
+      }
       return;   // nessun'altra elaborazione necessaria prima dell'avvio missione
 
     case STATE_SEARCHING_SIGNAL:

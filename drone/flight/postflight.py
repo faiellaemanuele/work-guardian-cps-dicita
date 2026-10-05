@@ -30,18 +30,20 @@ def _landed_by_pilot(subsystems: Subsystems) -> bool:
 
 def _export_biometric_session(biometric_logger) -> None:
     try:
-        session_dir = biometric_logger.export_session(APP_CONFIG.biometric_sessions_dir)
+        session_dir = biometric_logger.export_session(
+            APP_CONFIG.biometric_sessions_dir, app_config=APP_CONFIG
+        )
         if session_dir is not None:
             print_step(
                 "OK",
-                "I grafici biometrici sono stati salvati nella cartella "
+                "La sessione biometrica è stata salvata nella cartella "
                 f"{_project_relative(session_dir)}",
             )
         else:
             print_step(
                 "!!",
                 "Non è stato possibile creare la cartella della sessione biometrica: "
-                "i grafici degli orologi non sono stati salvati",
+                "i dati degli orologi non sono stati salvati",
             )
         for riga in biometric_logger.get_summary().splitlines():
             print_step("--", riga)

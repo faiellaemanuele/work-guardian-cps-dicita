@@ -3,10 +3,14 @@ from __future__ import annotations
 import time
 from typing import Callable, Optional
 
-from openpyxl.styles import Font, PatternFill
-from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from drone.data.excel_tables import (
+    write_data_sheet,
+    write_legend_sheet as write_legend_blocks,
+    write_parameters_sheet as write_parameters_block,
+    write_stats_table,
+)
 from drone.data.flight_excel_style import (
     ALERT_FILL,
     ALERT_FONT,
@@ -19,10 +23,6 @@ from drone.data.flight_excel_style import (
     FMT_PCT,
     FMT_S,
     FMT_TIME,
-    HEADER_BORDER,
-    HEADER_FILL,
-    HEADER_FONT,
-    LABEL_FONT,
     LEFT,
     OK_FILL,
     OK_FONT,
@@ -32,7 +32,6 @@ from drone.data.flight_excel_style import (
     WARN_FILL,
     WARN_FONT,
     WRAP_LEFT,
-    ZEBRA_FILL,
     autofit_columns,
     bool_it,
     clock,
@@ -67,7 +66,7 @@ def _rel_time(entries):
     return lambda e: tempi.get(id(e), 0.0)
 
 
-def _autopilot_columns(entries) -> list[tuple[str, Callable, Optional[str]]]:
+def _autopilot_columns(entries, separator: str) -> list[tuple[str, Callable, Optional[str]]]:
     rel = _rel_time(entries)
 
     def wp_number(e):
@@ -97,12 +96,12 @@ def _autopilot_columns(entries) -> list[tuple[str, Callable, Optional[str]]]:
         ("Missione completata", lambda e: bool_it(e.get("finished")), None),
         ("Anomalia", lambda e: bool_it(e.get("fault")), None),
         ("Stato del controllo", lambda e: translate_reason(e.get("reason", "")), None),
-        ("Tag AprilTag visti", lambda e: None, None),
+        ("Tag AprilTag visti", lambda e: join_tag_ids(e.get("tag_ids"), separator), None),
         ("Origine della posa", lambda e: translate_source(e.get("pose_source", "")), None),
     ]
 
 
-def _comparison_columns(entries) -> list[tuple[str, Callable, Optional[str]]]:
+def _comparison_columns(entries, separator: str) -> list[tuple[str, Callable, Optional[str]]]:
     rel = _rel_time(entries)
     return [
         ("Orario", lambda e: clock(e["timestamp"]), FMT_TIME),
@@ -119,63 +118,11 @@ def _comparison_columns(entries) -> list[tuple[str, Callable, Optional[str]]]:
         ("Correzione Y [m]", lambda e: e["error_y"], FMT_M),
         ("Correzione Z [m]", lambda e: e["error_z"], FMT_M),
         ("Correzione totale [m]", lambda e: e["error_norm"], FMT_M),
-        ("Tag AprilTag visti", lambda e: None, None),
+        ("Tag AprilTag visti", lambda e: join_tag_ids(e.get("tag_ids"), separator), None),
         ("Origine posa grezza", lambda e: translate_source(e.get("raw_source")), None),
         ("Origine posa Kalman", lambda e: translate_source(e.get("filtered_source")), None),
         ("Misura scartata", lambda e: bool_it(e.get("outlier_rejected")), None),
     ]
-
-
-def _write_data_sheet(
-    ws: Worksheet,
-    entries,
-    columns: list[tuple[str, Callable, Optional[str]]],
-    *,
-    separator: str,
-    tag_column_header: str,
-    highlights: dict[str, tuple[str, PatternFill, Font]],
-) -> None:
-    headers = [c[0] for c in columns]
-    tag_col_index = headers.index(tag_column_header) + 1
-
-    for col_index, (header, _getter, _fmt) in enumerate(columns, start=1):
-        cell = ws.cell(row=1, column=col_index, value=header)
-        cell.font = HEADER_FONT
-        cell.fill = HEADER_FILL
-        cell.alignment = CENTER
-        cell.border = HEADER_BORDER
-
-    for row_index, entry in enumerate(entries, start=2):
-        zebra = ZEBRA_FILL if (row_index % 2 == 0) else None
-        for col_index, (header, getter, fmt) in enumerate(columns, start=1):
-            if col_index == tag_col_index:
-                value = join_tag_ids(entry.get("tag_ids"), separator)
-            else:
-                value = getter(entry)
-            cell = ws.cell(row=row_index, column=col_index, value=value)
-            cell.font = BASE_FONT
-            if fmt is not None:
-                cell.number_format = fmt
-                cell.alignment = RIGHT
-            else:
-                cell.alignment = LEFT
-            if zebra is not None:
-                cell.fill = zebra
-
-        for header, (trigger_word, fill, font) in highlights.items():
-            hi_index = headers.index(header) + 1
-            hi_cell = ws.cell(row=row_index, column=hi_index)
-            if str(hi_cell.value) == trigger_word:
-                hi_cell.fill = fill
-                hi_cell.font = font
-                hi_cell.alignment = CENTER
-
-    autofit_columns(ws)
-
-    ws.freeze_panes = "A2"
-    last_col = get_column_letter(len(columns))
-    last_row = len(entries) + 1
-    ws.auto_filter.ref = f"A1:{last_col}{last_row}"
 
 
 _STAT_LABELS = {
@@ -190,26 +137,14 @@ _STAT_LABELS = {
 }
 
 
-def _write_stats_table(ws: Worksheet, row: int, stats: list[tuple[str, float, float, float, Optional[float]]]) -> int:
-    row = table_header(ws, row, ["Grandezza", "Minimo", "Massimo", "Media", "Dev. std"])
-    for name, mn, mx, mean, std in stats:
-        label = _STAT_LABELS.get(name, name)
-        fmt = FMT_DEG if "yaw" in name else FMT_M
-        ws.cell(row=row, column=1, value=label).font = BASE_FONT
-        for col_index, val in ((2, mn), (3, mx), (4, mean), (5, std)):
-            if val is None:
-                c = ws.cell(row=row, column=col_index, value="—")
-                c.alignment = CENTER
-            else:
-                c = ws.cell(row=row, column=col_index, value=val)
-                c.number_format = fmt
-                c.alignment = RIGHT
-            c.font = BASE_FONT
-            c.border = CELL_BORDER
-        ws.cell(row=row, column=1).border = CELL_BORDER
-        ws.cell(row=row, column=1).alignment = LEFT
-        row += 1
-    return row
+def _stat_format(name: str) -> str:
+    return FMT_DEG if "yaw" in name else FMT_M
+
+
+def _write_stats_table(ws: Worksheet, row: int, stats) -> int:
+    return write_stats_table(
+        ws, row, stats, labels=_STAT_LABELS, number_format=_stat_format
+    )
 
 
 def write_summary_sheet(ws: Worksheet, logger) -> None:
@@ -426,82 +361,31 @@ _LEGEND_KALMAN = [
 
 
 def write_legend_sheet(ws: Worksheet, *, include_autopilot: bool, include_kalman: bool) -> None:
-    ws.column_dimensions["A"].width = 32
-    ws.column_dimensions["B"].width = 78
-    ws.sheet_view.showGridLines = False
-
-    ws.merge_cells("A1:B1")
-    title = ws.cell(row=1, column=1, value="Legenda delle colonne")
-    title.font = TITLE_FONT
-    row = 3
-
-    def _block(section_name: str, pairs: list[tuple[str, str]], start: int) -> int:
-        r = section_title(ws, start, section_name, span=2)
-        r = table_header(ws, r, ["Colonna", "Significato"])
-        for name, meaning in pairs:
-            name_cell = ws.cell(row=r, column=1, value=name)
-            name_cell.font = LABEL_FONT
-            name_cell.alignment = WRAP_LEFT
-            name_cell.border = CELL_BORDER
-            mean_cell = ws.cell(row=r, column=2, value=meaning)
-            mean_cell.font = BASE_FONT
-            mean_cell.alignment = WRAP_LEFT
-            mean_cell.border = CELL_BORDER
-            r += 1
-        return r + 1
-
+    blocks = []
     if include_autopilot:
-        row = _block("Foglio «Autopilota»", _LEGEND_AUTOPILOT, row)
+        blocks.append(("Foglio «Autopilota»", _LEGEND_AUTOPILOT))
     if include_kalman:
-        row = _block("Foglio «Kalman»", _LEGEND_KALMAN, row)
+        blocks.append(("Foglio «Kalman»", _LEGEND_KALMAN))
+    write_legend_blocks(ws, blocks)
 
 
 def write_parameters_sheet(ws: Worksheet, parameters: list[tuple[str, list[tuple[str, str]]]]) -> None:
-    ws.sheet_view.showGridLines = False
-
-    ws.merge_cells("A1:B1")
-    title = ws.cell(row=1, column=1, value="Parametri della sessione")
-    title.font = TITLE_FONT
-    ws.merge_cells("A2:B2")
-    subtitle = ws.cell(
-        row=2, column=1,
-        value="Configurazione con cui è stato eseguito il volo.",
+    write_parameters_block(
+        ws,
+        parameters,
+        subtitle="Configurazione con cui è stato eseguito il volo.",
+        note=(
+            "I comandi ai motori sono espressi in unità del canale RC del Tello "
+            "(intervallo −100…100)."
+        ),
     )
-    subtitle.font = SUBTITLE_FONT
-    row = 4
-
-    for group_title, items in parameters:
-        row = section_title(ws, row, group_title, span=2)
-        for label, value in items:
-            label_cell = ws.cell(row=row, column=1, value=label)
-            label_cell.font = LABEL_FONT
-            label_cell.alignment = LEFT
-            label_cell.border = CELL_BORDER
-            value_cell = ws.cell(row=row, column=2, value=value)
-            value_cell.font = BASE_FONT
-            value_cell.alignment = LEFT
-            value_cell.border = CELL_BORDER
-            row += 1
-        row += 1
-
-    note = ws.cell(
-        row=row, column=1,
-        value="I comandi ai motori sono espressi in unità del canale RC del Tello (intervallo −100…100).",
-    )
-    note.font = SUBTITLE_FONT
-    note.alignment = WRAP_LEFT
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-
-    autofit_columns(ws)
 
 
 def write_autopilot_sheet(ws: Worksheet, entries, *, separator: str) -> None:
-    _write_data_sheet(
+    write_data_sheet(
         ws,
         entries,
-        _autopilot_columns(entries),
-        separator=separator,
-        tag_column_header="Tag AprilTag visti",
+        _autopilot_columns(entries, separator),
         highlights={
             "Anomalia": ("Sì", ALERT_FILL, ALERT_FONT),
             "Waypoint raggiunto": ("Sì", OK_FILL, OK_FONT),
@@ -510,12 +394,10 @@ def write_autopilot_sheet(ws: Worksheet, entries, *, separator: str) -> None:
 
 
 def write_kalman_sheet(ws: Worksheet, entries, *, separator: str) -> None:
-    _write_data_sheet(
+    write_data_sheet(
         ws,
         entries,
-        _comparison_columns(entries),
-        separator=separator,
-        tag_column_header="Tag AprilTag visti",
+        _comparison_columns(entries, separator),
         highlights={
             "Misura scartata": ("Sì", WARN_FILL, WARN_FONT),
         },

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -11,6 +10,14 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from drone.config import APP_CONFIG
+from drone.data.biometric_report_stats import (
+    MAX_GAP_SEC as _MAX_GAP_SEC,
+    NOMINAL_STEP_SEC as _NOMINAL_STEP_SEC,
+    STATE_LABELS as _STATE_LABELS,
+    alarm_causes,
+    format_duration as _format_duration,
+    safe_worker_name as _safe_worker,
+)
 from drone.data.flight_report_stats import duration_key
 from drone.ui.plots.axes import (
     SAT_DASHES,
@@ -33,25 +40,18 @@ _FILENAMES = {
     "spo2_session":    "biometria_andamento_spo2.png",
 }
 
-# L'orologio pubblica ogni 0,5 s: un silenzio più lungo è un buco (orologio
-# spento o fuori copertura, broker irraggiungibile) e le linee non devono
-# attraversarlo come se i valori fossero noti.
-_MAX_GAP_SEC = 3.0
-_NOMINAL_STEP_SEC = 0.5
-
-# Stati dell'automa del firmware (getStateName() in smartwatch.ino), nell'ordine
-# in cui compaiono in legenda.
-_STATES = (
-    ("MISSIONE_NON_AVVIATA", "Missione non avviata", PALETTE["stato_non_avviata"]),
-    ("RICERCA_SEGNALE",      "Ricerca segnale",      PALETTE["stato_ricerca"]),
-    ("NORMALE",              "Normale",              PALETTE["stato_normale"]),
-    ("VERIFICA",             "Verifica",             PALETTE["stato_verifica"]),
-    ("ALLARME",              "Allarme",              PALETTE["stato_allarme"]),
-    ("SILENZIATO",           "Silenziato",           PALETTE["stato_silenziato"]),
-    ("GUASTO",               "Guasto del sensore",   PALETTE["stato_guasto"]),
-)
-_STATE_LABELS = {code: label for code, label, _ in _STATES}
-_STATE_COLORS = {code: color for code, _, color in _STATES}
+# Il colore di ogni stato dell'automa del firmware; le etichette e l'ordine in
+# cui compaiono in legenda stanno in biometric_report_stats, gli stessi che
+# usano i report della sessione.
+_STATE_COLORS = {
+    "MISSIONE_NON_AVVIATA": PALETTE["stato_non_avviata"],
+    "RICERCA_SEGNALE":      PALETTE["stato_ricerca"],
+    "NORMALE":              PALETTE["stato_normale"],
+    "VERIFICA":             PALETTE["stato_verifica"],
+    "ALLARME":              PALETTE["stato_allarme"],
+    "SILENZIATO":           PALETTE["stato_silenziato"],
+    "GUASTO":               PALETTE["stato_guasto"],
+}
 
 
 @dataclass
@@ -97,17 +97,8 @@ def _break_gaps(t: np.ndarray, columns: list, states: list):
 
 
 def _alarm_causes(event) -> tuple[bool, bool]:
-    # L'evento dice solo che l'allarme è scattato, ma porta i valori del
-    # momento della conferma: il firmware lo conferma solo con almeno uno dei
-    # due fuori dalle soglie di ingresso, quindi la causa si ricava da lì.
     # Senza valori leggibili l'allarme resta su entrambi i grafici.
-    thr = APP_CONFIG.smartwatch_thresholds
-    bpm, spo2 = event.get("bpm"), event.get("spo2")
-    hr_cause = bpm is not None and (bpm > thr.bpm_max_in or bpm < thr.bpm_min_in)
-    spo2_cause = spo2 is not None and spo2 < thr.spo2_min_in
-    if not hr_cause and not spo2_cause:
-        return True, True
-    return hr_cause, spo2_cause
+    return alarm_causes(event, APP_CONFIG.smartwatch_thresholds)
 
 
 def _alarm_labels(prefix: str, count: int) -> list[str]:
@@ -123,10 +114,6 @@ def _alarm_legend_label(parameter: str, labels: list[str]) -> str:
         return f"Allarme {parameter} ({labels[0]})"
     shown = ", ".join(labels) if len(labels) <= 3 else f"{labels[0]}, {labels[1]}, …"
     return f"Allarmi {parameter} ({shown})"
-
-
-def _safe_worker(worker: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", worker).strip("_") or "orologio"
 
 
 def _prepare(logger, worker: str, output_dir: Path, plt, saved_paths: list,
@@ -203,14 +190,6 @@ def _style_panel(ax, ylabel: str) -> None:
 
 def _subtitle(data: _Data) -> str:
     return f"Sessione biometrica  ·  {data.meta}"
-
-
-def _format_duration(seconds: float) -> str:
-    seconds = max(0, int(round(seconds)))
-    minuti, secondi = divmod(seconds, 60)
-    if not minuti:
-        return f"{secondi} s"
-    return f"{minuti} min {secondi} s" if secondi else f"{minuti} min"
 
 
 def _mean_gap(raw: np.ndarray, filtered: np.ndarray) -> Optional[float]:
@@ -359,7 +338,7 @@ def _state_strip(ax, data: _Data) -> list:
     ax.tick_params(labelsize=9)
     ax.set_xlabel("Tempo [s]", fontsize=11)
 
-    known = [code for code, _, _ in _STATES]
+    known = list(_STATE_LABELS)
     present = [code for code in known if code in durations]
     present += sorted(code for code in durations if code not in known)
     return [

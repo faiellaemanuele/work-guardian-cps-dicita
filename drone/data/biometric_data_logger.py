@@ -114,7 +114,92 @@ class BiometricDataLogger:
         from drone.ui.plots import flight_plots
         return flight_plots.save_biometric_plots(self, output_dir)
 
-    def export_session(self, output_root: str | Path) -> Optional[Path]:
+    EXCEL_FILENAME = "dati_biometrici.xlsx"
+
+    TEXT_FILENAME = "biometria_log_orologio.txt"
+
+    @staticmethod
+    def _app_config(app_config: Any):
+        if app_config is not None:
+            return app_config
+        from drone.config import APP_CONFIG
+        return APP_CONFIG
+
+    def _text_filename(self, worker: str, *, tag_files: bool) -> str:
+        if not tag_files:
+            return self.TEXT_FILENAME
+        from drone.data.biometric_report_stats import safe_worker_name
+        return f"biometria_log_orologio_{safe_worker_name(worker)}.txt"
+
+    def save_all_text_files(
+        self, output_dir: str | Path, *, app_config: Any = None
+    ) -> list[Path]:
+        if not self.has_data():
+            LOGGER.info("Nessun dato dagli orologi da esportare nei file di testo.")
+            return []
+
+        from drone.data import biometric_text_report
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        thresholds = self._app_config(app_config).smartwatch_thresholds
+
+        workers = [worker for worker in self.workers() if self.samples(worker)]
+        # Con un solo orologio il nome del file resta quello fisso; con più
+        # orologi ognuno porta l'identificativo dell'operaio.
+        tag_files = len(workers) > 1
+
+        saved_paths: list[Path] = []
+        for worker in workers:
+            try:
+                saved_paths.append(
+                    biometric_text_report.save_worker_data_to_file(
+                        self,
+                        worker,
+                        output_dir / self._text_filename(worker, tag_files=tag_files),
+                        thresholds,
+                    )
+                )
+            except Exception:
+                LOGGER.exception(
+                    "Non è stato possibile salvare il file di testo dell'orologio %s",
+                    worker,
+                )
+        return saved_paths
+
+    def _save_excel(
+        self, session_dir: Path, *, app_config: Any = None
+    ) -> Optional[Path]:
+        try:
+            from drone.data import biometric_excel_report
+        except ImportError:
+            LOGGER.info(
+                "openpyxl non disponibile: i dati degli orologi vengono salvati nei "
+                "file di testo. Per avere il file Excel: pip install openpyxl."
+            )
+            return None
+
+        try:
+            app_config = self._app_config(app_config)
+            parameters = biometric_excel_report.collect_session_parameters(
+                self, app_config
+            )
+            return biometric_excel_report.save_session_workbook(
+                self,
+                session_dir / self.EXCEL_FILENAME,
+                app_config.smartwatch_thresholds,
+                parameters,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Non è stato possibile scrivere il file Excel della sessione "
+                "biometrica: vengono salvati i file di testo"
+            )
+            return None
+
+    def export_session(
+        self, output_root: str | Path, *, app_config: Any = None
+    ) -> Optional[Path]:
         if not self.has_data():
             LOGGER.info(
                 "Nessun dato dagli orologi: la cartella della sessione biometrica "
@@ -132,6 +217,10 @@ class BiometricDataLogger:
                     suffix += 1
                 session_dir = output_root / f"{session_name}_{suffix}"
             session_dir.mkdir(parents=True, exist_ok=True)
+
+            excel_path = self._save_excel(session_dir, app_config=app_config)
+            if excel_path is None:
+                self.save_all_text_files(session_dir, app_config=app_config)
 
             try:
                 self.save_plots(session_dir)
