@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import pygame
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from drone.config import APP_CONFIG
 from drone.hardware.joystick import (
@@ -154,22 +154,8 @@ _KEY_PAD = 30
 _ARROW_GAP = 8
 _ACTION_GAP = 30
 
-_BANNER_SOURCE_SIZE = (1983, 797)
-
-_BANNER_PIECES = (
-    ((0, 275, 650, 575), 0.64, ("width", 0.166), 0.32, 0.35, False),
-    ((668, 228, 1192, 610), 0.83, ("width", 0.302), 0.09, 0.2, False),
-    ((935, 395, 1250, 650), 0.56, ("width", 0.571), 0.41, 0.3, False),
-    ((0, 275, 650, 575), 0.70, ("width", 0.632), 0.26, 0.35, True),
-    ((668, 228, 1192, 610), 0.60, ("width", 0.754), 0.20, 0.3, False),
-    ((0, 275, 650, 575), 0.59, ("width", 0.798), 0.38, 0.35, False),
-    ((1805, 310, 1983, 665), 0.75, ("right", 0.45), 0.20, 0.2, False),
-    ((1255, 105, 1850, 665), 0.88, ("width", 0.45), 0.05, 0.0, False),
-    ((55, 100, 1145, 212), 0.25, ("height", 0.12), 0.09, 0.0, False),
-    ((75, 585, 735, 722), 0.28, ("height", 0.12), 0.62, 0.0, False),
-)
-
 _BANNER_CACHE: dict[tuple[int, int], "Image.Image"] = {}
+_BANNER_SOURCE_CACHE: dict[tuple[Path, int], "Image.Image"] = {}
 
 
 def _logo_file() -> Optional[Path]:
@@ -182,55 +168,53 @@ def _logo_file() -> Optional[Path]:
     return None
 
 
-def _multiply_paste(band, piece, x: float, y: float) -> None:
-    x, y = int(round(x)), int(round(y))
-    sx0, sy0 = max(0, -x), max(0, -y)
-    x0, y0 = max(0, x), max(0, y)
-    x1, y1 = min(band.width, x + piece.width), min(band.height, y + piece.height)
-    if x1 <= x0 or y1 <= y0:
-        return
-    ritaglio = piece.crop((sx0, sy0, sx0 + (x1 - x0), sy0 + (y1 - y0)))
-    band.paste(ImageChops.multiply(band.crop((x0, y0, x1, y1)), ritaglio), (x0, y0))
+def _banner_source() -> Optional["Image.Image"]:
+    path = _logo_file()
+    if path is None:
+        return None
+
+    try:
+        signature = (path, path.stat().st_mtime_ns)
+        cached = _BANNER_SOURCE_CACHE.get(signature)
+        if cached is not None:
+            return cached
+        with Image.open(path) as source:
+            source = source.convert("RGB")
+    except OSError:
+        return None
+
+    # Elimina i margini laterali vuoti già contenuti nel file.
+    white = Image.new("RGB", source.size, (255, 255, 255))
+    difference = ImageChops.difference(source, white).convert("L")
+    bounds = difference.point(lambda pixel: 255 if pixel > 8 else 0).getbbox()
+    if bounds is not None:
+        padding = max(1, round(source.height * 0.04))
+        left = max(0, bounds[0] - padding)
+        right = min(source.width, bounds[2] + padding)
+        source = source.crop((left, 0, right, source.height))
+
+    _BANNER_SOURCE_CACHE.clear()
+    _BANNER_SOURCE_CACHE[signature] = source
+    _BANNER_CACHE.clear()
+    return source
 
 
 def _banner_image(width: int, height: int) -> Optional["Image.Image"]:
     width, height = max(1, int(width)), max(1, int(height))
+    source = _banner_source()
+    if source is None:
+        return None
+
     cached = _BANNER_CACHE.get((width, height))
     if cached is not None:
         return cached
 
-    path = _logo_file()
-    if path is None:
-        return None
-    try:
-        sorgente = Image.open(path).convert("RGB")
-    except OSError:
-        return None
-
-    fx = sorgente.width / _BANNER_SOURCE_SIZE[0]
-    fy = sorgente.height / _BANNER_SOURCE_SIZE[1]
-    fascia = Image.new("RGB", (width, height), (255, 255, 255))
-    for box, alto, (ancora, valore), y, sbiadito, specchio in _BANNER_PIECES:
-        pezzo = sorgente.crop((
-            round(box[0] * fx), round(box[1] * fy), round(box[2] * fx), round(box[3] * fy),
-        ))
-        h = max(1, round(height * alto))
-        pezzo = pezzo.resize((max(1, round(pezzo.width * h / pezzo.height)), h), Image.LANCZOS)
-        if specchio:
-            pezzo = pezzo.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-        if sbiadito:
-            pezzo = Image.blend(pezzo, Image.new("RGB", pezzo.size, (255, 255, 255)), sbiadito)
-        if ancora == "width":
-            x = valore * width
-        elif ancora == "right":
-            x = width - valore * height
-        else:
-            x = valore * height
-        _multiply_paste(fascia, pezzo, x, y * height)
-
+    # La geometria della fascia segue le proporzioni del banner.
+    # fit assorbe soltanto gli arrotondamenti ai pixel, senza aggiungere margini.
+    banner = ImageOps.fit(source, (width, height), method=Image.LANCZOS)
     _BANNER_CACHE.clear()
-    _BANNER_CACHE[(width, height)] = fascia
-    return fascia
+    _BANNER_CACHE[(width, height)] = banner
+    return banner
 
 
 def _draw_banner(img, box, fonts_map) -> None:
@@ -511,7 +495,13 @@ def _geometry(width, height, exit_rect, start_rect):
     destra_x = start_rect.right * SS
     linea = footer_rule_y(exit_rect.y, supersample=SS, unit=SS * k)
     banner_top = _scale(30)
-    banner_bottom = banner_top + _scale(190)
+    source = _banner_source()
+    banner_height = _scale(190)
+    if source is not None:
+        inset = int(round(6 * _unit()))
+        inner_width = max(1, destra_x - sinistra_x - 2 * inset)
+        banner_height = max(1, round(inner_width * source.height / source.width)) + 2 * inset
+    banner_bottom = banner_top + banner_height
     gap = _scale(20)
     disponibile = destra_x - sinistra_x - gap
     sinistra = int(disponibile * _LEFT_SHARE)
