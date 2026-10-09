@@ -36,10 +36,34 @@ def test_il_tempo_parte_da_zero_e_le_serie_restano_appaiate():
         return
     dati = _dati()
     assert dati.t[0] == 0.0
-    for serie in (dati.hr_raw, dati.hr_filtered, dati.spo2_raw, dati.spo2_filtered):
+    for serie in (dati.hr_raw, dati.hr_filtered, dati.spo2_raw, dati.spo2_filtered,
+                  dati.bpm, dati.spo2):
         assert len(serie) == len(dati.t)
     assert len(dati.states) == len(dati.t)
     assert "campioni" in dati.meta
+
+
+def test_il_punto_oltre_soglia_segue_il_battito_arrotondato_come_nel_firmware():
+    if not _matplotlib_available():
+        return
+    from drone.data.biometric_data_logger import BiometricDataLogger
+    from drone.ui.plots import biometric_plots as modulo
+    log = BiometricDataLogger()
+    for i, hr in enumerate((120.4, 120.6)):
+        log.log_message(
+            {"bpm": round(hr), "spo2": 97, "stato": "NORMALE", "lettura_valida": True,
+             "hr_filtrato": hr, "spo2_filtrato": 97.0},
+            timestamp=100.0 + i * 0.5,
+        )
+    pannelli = []
+    originale = modulo._session
+    modulo._session = lambda data, *, panel, **_kw: pannelli.append(panel)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            modulo._hr_session(modulo._prepare(log, Path(d), _plt(), []))
+    finally:
+        modulo._session = originale
+    assert list(pannelli[0]["out_mask"]) == [False, True]
 
 
 def test_un_buco_nella_telemetria_spezza_le_linee():

@@ -13,6 +13,8 @@ from drone.data.biometric_report_stats import (
     format_duration,
     monitored_duration_sec,
     relative_time,
+    sample_hr_out_of_band,
+    sample_spo2_out_of_band,
     sample_step_sec,
     session_clock,
     state_durations,
@@ -79,6 +81,17 @@ def test_the_alarm_cause_comes_from_the_values_of_the_event():
     assert alarm_cause_label({"bpm": 80.0, "spo2": 90.0}, _SOGLIE) == "Saturazione"
     assert alarm_cause_label({"bpm": 130.0, "spo2": 90.0}, _SOGLIE) == "Battito e saturazione"
     assert "Non ricavabile" in alarm_cause_label({"bpm": None, "spo2": None}, _SOGLIE)
+
+
+def test_a_sample_is_out_of_band_on_the_rounded_value_like_the_firmware():
+    # il firmware confronta il battito arrotondato all'intero: 120,4 bpm
+    # diventano 120, dentro la soglia massima di ingresso
+    assert not sample_hr_out_of_band({"bpm": 120.0, "hr_filtrato": 120.4}, _SOGLIE)
+    assert sample_hr_out_of_band({"bpm": 121.0, "hr_filtrato": 120.6}, _SOGLIE)
+    assert not sample_hr_out_of_band({"bpm": 30.0, "hr_filtrato": 29.6}, _SOGLIE)
+    assert not sample_spo2_out_of_band({"spo2": 92.0, "spo2_filtrato": 91.6}, _SOGLIE)
+    assert sample_spo2_out_of_band({"spo2": 91.0, "spo2_filtrato": 91.4}, _SOGLIE)
+    assert not sample_hr_out_of_band({"bpm": None, "hr_filtrato": None}, _SOGLIE)
 
 
 def test_the_session_clock_starts_from_the_first_of_all_the_entries():

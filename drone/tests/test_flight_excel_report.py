@@ -89,6 +89,19 @@ def test_excel_parameters_sheet_from_config():
     assert "kp XY" in testo
 
 
+def test_excel_parameters_accept_no_tag_distance_limit():
+    from dataclasses import replace
+    from drone.config import APP_CONFIG
+    from drone.data import flight_excel_report
+
+    config = replace(
+        APP_CONFIG, camera_pose=replace(APP_CONFIG.camera_pose, max_tag_distance_m=None)
+    )
+    params = flight_excel_report.collect_run_parameters(FlightDataLogger(), config)
+    voci = dict(voce for _gruppo, righe in params for voce in righe)
+    assert voci["Distanza massima del tag [m]"] == "nessun limite"
+
+
 def test_export_session_creates_excel():
     if not _openpyxl_available():
         return

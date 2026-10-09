@@ -1,3 +1,22 @@
+"""Deploy di un modello YOLO addestrato nell'area di servizio.
+
+Lo script trasferisce un addestramento completato dalla cartella di lavoro
+``vision/training/trainer/models`` alla cartella ``vision/models``, dalla quale
+il sistema di volo carica i modelli effettivamente utilizzati.
+
+Durante il deploy può:
+- copiare ``best.pt``, ``last.pt``, ``results.csv`` e ``args.yaml``;
+- aggiornare in ``args.yaml`` i percorsi relativi alla struttura definitiva;
+- convertire ``results.csv`` nel formato italiano;
+- segnalare se il modello non è registrato in ``catalog.json``;
+- sostituire un modello già in servizio tramite ``--sostituisci``;
+- rigenerare ``info.txt`` tramite una nuova validazione con ``--scheda``.
+
+Quando viene sostituito un modello senza rigenerarne immediatamente la scheda,
+``info.txt`` viene marcato come obsoleto per evitare che descriva pesi diversi
+da quelli realmente in servizio.
+"""
+
 import json
 import platform
 import re
@@ -8,7 +27,9 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BASE_DIR = SCRIPT_DIR.parents[2]
+# Addestramenti prodotti dal trainer e non ancora necessariamente in servizio.
 RUNS_DIR = SCRIPT_DIR / "models"
+# Modelli definitivi caricabili dal sistema di volo.
 MODELS_DIR = SCRIPT_DIR.parents[1] / "models"
 CATALOGO = MODELS_DIR / "catalog.json"
 DATASETS_RELATIVI = "vision/training/trainer/datasets"
@@ -25,6 +46,7 @@ AVVISO_OBSOLETA = ("ATTENZIONE: da qui in su questa scheda descrive l'addestrame
 
 
 def breve(percorso):
+    """Restituisce un percorso relativo alla radice del progetto, se possibile."""
     percorso = Path(percorso).resolve()
     try:
         return str(percorso.relative_to(BASE_DIR))
@@ -33,22 +55,26 @@ def breve(percorso):
 
 
 def run_disponibili():
+    """Elenca gli addestramenti che contengono un checkpoint ``best.pt`` utilizzabile."""
     if not RUNS_DIR.is_dir():
         return []
     return sorted(d.name for d in RUNS_DIR.iterdir() if (d / "weights" / "best.pt").is_file())
 
 
 def modelli_disponibili():
+    """Elenca le cartelle dei modelli attualmente presenti in servizio."""
     if not MODELS_DIR.is_dir():
         return []
     return sorted(d.name for d in MODELS_DIR.iterdir() if d.is_dir())
 
 
 def terminatore(testo):
+    """Rileva il terminatore di riga utilizzato da un testo."""
     return "\r\n" if "\r\n" in testo else "\n"
 
 
 def nome_dataset(valore):
+    """Ricava il nome del dataset da un percorso o da un file YAML."""
     parti = valore.strip().strip("'\"").replace("\\", "/").rstrip("/").split("/")
     if parti and parti[-1].endswith((".yaml", ".yml")):
         parti = parti[:-1]
@@ -56,6 +82,7 @@ def nome_dataset(valore):
 
 
 def valori_di(percorso):
+    """Legge le coppie chiave-valore di primo livello da un semplice file YAML."""
     if not percorso.is_file():
         return {}
     testo = percorso.read_bytes().decode("utf-8")
@@ -68,6 +95,7 @@ def valori_di(percorso):
 
 
 def sistema_args(percorso, modello):
+    """Aggiorna in ``args.yaml`` i percorsi affinché puntino alla struttura definitiva del modello."""
     testo = percorso.read_bytes().decode("utf-8")
     fine = terminatore(testo)
     righe = testo.split(fine)
@@ -98,6 +126,7 @@ def sistema_args(percorso, modello):
 
 
 def decimali_necessari(valori):
+    """Determina il numero minimo di cifre decimali necessario a preservare i valori."""
     numeri = [float(v) for v in valori]
     for decimali in range(18):
         if all(float(f"{n:.{decimali}f}") == n for n in numeri):
@@ -106,6 +135,7 @@ def decimali_necessari(valori):
 
 
 def formatta_results(percorso):
+    """Converte ``results.csv`` usando punto e virgola e virgola decimale."""
     testo = percorso.read_bytes().decode("utf-8")
     fine = terminatore(testo)
     separatore = ";" if ";" in testo.split(fine)[0] else ","
@@ -139,6 +169,7 @@ def formatta_results(percorso):
 
 
 def righe_results(percorso):
+    """Legge ``results.csv`` e restituisce le righe come dizionari."""
     if not percorso.is_file():
         return []
     testo = percorso.read_bytes().decode("utf-8")
@@ -155,6 +186,7 @@ def righe_results(percorso):
 
 
 def epoca_migliore(righe, metriche_migliori):
+    """Individua l'epoca associata alle metriche salvate nel checkpoint migliore."""
     if not righe or not metriche_migliori:
         return None
     trovate = []
@@ -167,6 +199,7 @@ def epoca_migliore(righe, metriche_migliori):
 
 
 def metadati_checkpoint(pesi):
+    """Estrae dal checkpoint versione di Ultralytics, data e metriche di training."""
     try:
         import torch
         checkpoint = torch.load(str(pesi), map_location="cpu", weights_only=False)
@@ -178,11 +211,13 @@ def metadati_checkpoint(pesi):
 
 
 def numero_italiano(valore, decimali=0):
+    """Formatta un numero usando la convenzione numerica italiana."""
     testo = f"{valore:,.{decimali}f}"
     return testo.replace(",", "@").replace(".", ",").replace("@", ".")
 
 
 def conta_immagini_val(dati):
+    """Conta le immagini appartenenti allo split di validazione del dataset."""
     try:
         from ultralytics.data.utils import check_det_dataset
         risolto = check_det_dataset(str(dati))
@@ -206,6 +241,7 @@ def conta_immagini_val(dati):
 
 
 def esegui_validazione(pesi, dati, impostazioni):
+    """Esegue la validazione Ultralytics di ``best.pt`` in una cartella temporanea."""
     from ultralytics import YOLO
     opzioni = {"data": str(dati), "plots": False, "verbose": False, "workers": 0}
     for chiave in ("imgsz", "batch", "split"):
@@ -219,6 +255,7 @@ def esegui_validazione(pesi, dati, impostazioni):
 
 
 def tabella_validazione(risultato, immagini_totali):
+    """Costruisce la tabella testuale delle metriche complessive e per classe."""
     intestazioni = ("classe", "immagini", "istanze", "precisione", "richiamo", "mAP50", "mAP50-95")
     nomi = getattr(risultato, "names", {}) or {}
     indici = list(getattr(risultato, "ap_class_index", []))
@@ -253,6 +290,7 @@ def tabella_validazione(risultato, immagini_totali):
 
 
 def registrato_nel_catalogo(modello):
+    """Verifica se il modello compare nel catalogo usato dal sistema di volo."""
     if not CATALOGO.is_file():
         return False
     try:
@@ -264,6 +302,7 @@ def registrato_nel_catalogo(modello):
 
 
 def paragrafo_esistente(percorso):
+    """Recupera il paragrafo descrittivo iniziale da un eventuale ``info.txt``."""
     if not percorso.is_file():
         return []
     testo = percorso.read_bytes().decode("utf-8")
@@ -279,6 +318,7 @@ def paragrafo_esistente(percorso):
 
 
 def segnala_scheda_obsoleta(percorso):
+    """Aggiunge a ``info.txt`` un avviso quando la scheda descrive pesi precedenti."""
     if not percorso.is_file():
         return False
     testo = percorso.read_bytes().decode("utf-8")
@@ -292,6 +332,7 @@ def segnala_scheda_obsoleta(percorso):
 
 
 def frase_conservata(percorso, inizio):
+    """Recupera da ``info.txt`` una frase che deve essere preservata nella rigenerazione."""
     if not percorso.is_file():
         return ""
     testo = percorso.read_bytes().decode("utf-8")
@@ -304,6 +345,7 @@ def frase_conservata(percorso, inizio):
 
 
 def a_capo(testo, larghezza=79):
+    """Suddivide un testo in righe senza superare la larghezza indicata."""
     righe, corrente = [], ""
     for parola in testo.split():
         if corrente and len(corrente) + 1 + len(parola) > larghezza:
@@ -317,6 +359,7 @@ def a_capo(testo, larghezza=79):
 
 
 def blocco_comando(valori):
+    """Ricostruisce il blocco Python con i principali parametri di addestramento."""
     righe = [f"    model = YOLO('{valori.get('model', 'yolo26s.pt')}')", "    model.train("]
     for chiave in CHIAVI_COMANDO:
         if chiave not in valori:
@@ -332,6 +375,7 @@ def blocco_comando(valori):
 
 
 def scrivi_scheda(destinazione, modello, valori, risultato, metadati, eseguite, dati_risolti):
+    """Rigenera ``info.txt`` combinando metadati del training e nuova validazione."""
     fine = "\r\n"
     info = destinazione / "info.txt"
     dataset = nome_dataset(valori.get("data", ""))
@@ -399,6 +443,7 @@ def scrivi_scheda(destinazione, modello, valori, risultato, metadati, eseguite, 
 
 
 def _ensure_utf8_console() -> None:
+    """Configura stdout e stderr in UTF-8 quando il runtime lo consente."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
@@ -515,3 +560,4 @@ if __name__ == "__main__":
         print("  la riga con Ultralytics, Python, torch e GPU, dallo stesso output")
         print("Non prenderle da results.csv: si ferma sull'ultima epoca, non su best.pt.")
         print("In alternativa rilancia con --scheda per rigenerarlo dalla validazione.")
+        

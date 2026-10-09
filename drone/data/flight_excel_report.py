@@ -45,6 +45,10 @@ def collect_run_parameters(logger, app_config, *, path_name: Optional[str] = Non
         if pf.outlier_gate_enabled else "disattivato"
     )
     camera = f"calibrata (fx≈{cp.camera_matrix[0][0]:.0f}, fy≈{cp.camera_matrix[1][1]:.0f} px)"
+    # Con None la localizzazione usa i tag a qualunque distanza.
+    distanza_tag = (
+        "nessun limite" if cp.max_tag_distance_m is None else _n(cp.max_tag_distance_m, 1)
+    )
 
     return [
         ("Missione", [
@@ -76,7 +80,7 @@ def collect_run_parameters(logger, app_config, *, path_name: Optional[str] = Non
             ("Famiglia dei tag", str(cp.tag_family)),
             ("Dimensione del tag [m]", _n(cp.tag_size_m, 2)),
             ("Modalità di fusione dei tag", fusione),
-            ("Distanza massima del tag [m]", _n(cp.max_tag_distance_m, 1)),
+            ("Distanza massima del tag [m]", distanza_tag),
             ("Camera", camera),
         ]),
         ("Sicurezza batteria", [

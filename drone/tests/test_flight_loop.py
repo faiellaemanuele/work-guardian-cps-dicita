@@ -136,6 +136,7 @@ _PATCH = (
     "release_mission",
     "setup_video_window",
     "mark_runtime_started",
+    "discard_button_presses",
     "reset_mission_state",
     "run_postflight",
     "apply_battery_guard",
@@ -229,6 +230,7 @@ class _Banco:
         flight_loop.release_mission = self._release_mission
         flight_loop.setup_video_window = lambda dashboard: self.registro.passi.append("finestra")
         flight_loop.mark_runtime_started = lambda: self.registro.passi.append("avvio")
+        flight_loop.discard_button_presses = lambda: self.registro.passi.append("coda_pulsanti_svuotata")
         flight_loop.reset_mission_state = lambda: self.registro.passi.append("reset_missione")
         flight_loop.run_postflight = lambda s, out: self.registro.passi.append("postflight")
         flight_loop.apply_battery_guard = self._apply_battery_guard
@@ -301,6 +303,13 @@ def test_la_finestra_si_apre_prima_del_ciclo():
 
     assert registro.passi.index("finestra") < registro.passi.index("step1")
     assert registro.passi.index("avvio") < registro.passi.index("step1")
+
+
+def test_le_pressioni_arrivate_prima_del_ciclo_non_vengono_eseguite():
+    registro = _Banco().esegui()
+
+    assert registro.passi.index("finestra") < registro.passi.index("coda_pulsanti_svuotata")
+    assert registro.passi.index("coda_pulsanti_svuotata") < registro.passi.index("step1")
 
 
 def test_un_ctrl_c_chiude_senza_propagare():

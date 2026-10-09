@@ -8,12 +8,12 @@ from openpyxl.worksheet.worksheet import Worksheet
 from drone.data.biometric_report_stats import (
     alarm_cause_label,
     format_duration,
-    hr_out_of_band,
     mean_abs_delta,
     monitored_duration_sec,
     relative_time,
+    sample_hr_out_of_band,
+    sample_spo2_out_of_band,
     sample_step_sec,
-    spo2_out_of_band,
     state_durations,
     state_label,
     telemetry_gaps,
@@ -97,9 +97,9 @@ def _sample_columns(
         ("Scarto SpO2 [%]",
          lambda c: _delta(c.get("spo2_filtrato"), c.get("spo2_grezzo")), FMT_SPO2),
         ("Battito fuori soglia",
-         lambda c: bool_it(hr_out_of_band(c.get("hr_filtrato"), thresholds)), None),
+         lambda c: bool_it(sample_hr_out_of_band(c, thresholds)), None),
         ("SpO2 fuori soglia",
-         lambda c: bool_it(spo2_out_of_band(c.get("spo2_filtrato"), thresholds)), None),
+         lambda c: bool_it(sample_spo2_out_of_band(c, thresholds)), None),
     ]
 
 
@@ -165,19 +165,19 @@ def _write_outcome(ws: Worksheet, row: int, samples, events, thresholds, titolo:
     row = kv(ws, row, "Allarmi biometrici confermati dall'orologio", len(events), FMT_INT)
     row = kv(
         ws, row, "Campioni col battito fuori soglia",
-        sum(1 for c in samples if hr_out_of_band(c.get("hr_filtrato"), thresholds)),
+        sum(1 for c in samples if sample_hr_out_of_band(c, thresholds)),
         FMT_INT,
     )
     row = kv(
         ws, row, "Campioni con la SpO2 fuori soglia",
-        sum(1 for c in samples if spo2_out_of_band(c.get("spo2_filtrato"), thresholds)),
+        sum(1 for c in samples if sample_spo2_out_of_band(c, thresholds)),
         FMT_INT,
     )
 
     entro_hr = percent_within(
         samples,
-        lambda c: not hr_out_of_band(c["hr_filtrato"], thresholds),
-        lambda c: c.get("hr_filtrato") is not None,
+        lambda c: not sample_hr_out_of_band(c, thresholds),
+        lambda c: c.get("bpm") is not None,
     )
     if entro_hr is not None:
         row = kv(
@@ -188,8 +188,8 @@ def _write_outcome(ws: Worksheet, row: int, samples, events, thresholds, titolo:
         )
     entro_spo2 = percent_within(
         samples,
-        lambda c: not spo2_out_of_band(c["spo2_filtrato"], thresholds),
-        lambda c: c.get("spo2_filtrato") is not None,
+        lambda c: not sample_spo2_out_of_band(c, thresholds),
+        lambda c: c.get("spo2") is not None,
     )
     if entro_spo2 is not None:
         row = kv(
@@ -321,13 +321,13 @@ _LEGEND_SAMPLES = [
     ("Stato dell'orologio", "Stato del firmware in quel momento: normale, verifica, allarme, silenziato, guasto del sensore, ricerca segnale."),
     ("Lettura valida", "Sì quando il sensore stava davvero misurando; con No il battito e la saturazione non sono affidabili."),
     ("Battito grezzo [bpm]", "Battito letto dal sensore MAX30100, senza filtro."),
-    ("Battito filtrato [bpm]", "Battito dopo il filtro dell'orologio (mediana su più letture e media mobile esponenziale): è il valore su cui il firmware decide l'allarme."),
+    ("Battito filtrato [bpm]", "Battito dopo il filtro dell'orologio (mediana su più letture e media mobile esponenziale): arrotondato all'intero, è il valore su cui il firmware decide l'allarme."),
     ("Scarto battito [bpm]", "Quanto il filtro ha spostato la lettura (filtrato − grezzo)."),
     ("SpO2 grezza [%]", "Saturazione dell'ossigeno letta dal sensore, senza filtro."),
     ("SpO2 filtrata [%]", "Saturazione dopo il filtro dell'orologio."),
     ("Scarto SpO2 [%]", "Quanto il filtro ha spostato la saturazione (filtrata − grezza)."),
-    ("Battito fuori soglia", "Sì quando il battito filtrato è oltre le soglie di ingresso dell'allarme."),
-    ("SpO2 fuori soglia", "Sì quando la saturazione filtrata è sotto la soglia di ingresso dell'allarme."),
+    ("Battito fuori soglia", "Sì quando il battito filtrato, arrotondato all'intero come lo confronta l'orologio, è oltre le soglie di ingresso dell'allarme."),
+    ("SpO2 fuori soglia", "Sì quando la saturazione filtrata, arrotondata all'intero come la confronta l'orologio, è sotto la soglia di ingresso dell'allarme."),
 ]
 
 _LEGEND_ALARMS = [

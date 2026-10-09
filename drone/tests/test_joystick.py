@@ -85,6 +85,42 @@ def test_escape_key_does_not_quit_during_flight():
         pygame.quit()
 
 
+def test_le_pressioni_in_coda_si_scartano_ma_lo_scollegamento_resta():
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    import pygame
+
+    try:
+        pygame.init()
+        pygame.display.set_mode((64, 48))
+    except Exception:
+        return
+
+    try:
+        pygame.event.clear()
+        pygame.event.post(pygame.event.Event(
+            pygame.JOYBUTTONDOWN, button=APP_CONFIG.joystick.button_takeoff, instance_id=0,
+        ))
+        pygame.event.post(pygame.event.Event(
+            pygame.JOYBUTTONUP, button=APP_CONFIG.joystick.button_takeoff, instance_id=0,
+        ))
+        pygame.event.post(pygame.event.Event(pygame.JOYDEVICEREMOVED, instance_id=0))
+        jt.discard_button_presses()
+        rimasti = [evento.type for evento in pygame.event.get()]
+        assert pygame.JOYBUTTONDOWN not in rimasti
+        assert pygame.JOYBUTTONUP not in rimasti
+        assert pygame.JOYDEVICEREMOVED in rimasti
+    finally:
+        pygame.quit()
+
+
+def test_svuotare_la_coda_senza_finestra_non_rompe_niente():
+    import pygame
+
+    pygame.quit()
+    jt.discard_button_presses()
+
+
 def test_labels_have_no_ambiguous_width_characters():
     for etichetta in _etichette():
         for carattere in etichetta:

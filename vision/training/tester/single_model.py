@@ -1,8 +1,26 @@
+"""Test in tempo reale di un singolo modello YOLO tramite webcam.
+
+Lo script carica un checkpoint ``best.pt`` e applica il modello ai frame
+acquisiti dalla webcam principale. Per ogni rilevamento vengono mostrati:
+- bounding box;
+- nome della classe;
+- confidenza della predizione.
+
+Il modello può essere indicato tramite:
+- nome della cartella presente in ``vision/models``;
+- percorso della cartella del modello;
+- percorso diretto a un file di pesi ``.pt``.
+
+Se non viene specificato alcun modello, viene utilizzato il primo modello
+valido trovato in ``vision/models``.
+"""
+
 import sys
 from pathlib import Path
 
 import cv2
 from ultralytics import YOLO
+
 
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -15,7 +33,9 @@ WINDOW_TITLE = "Prova di un modello"
 
 
 def breve(percorso):
+    """Restituisce un percorso relativo alla radice del progetto, se possibile."""
     percorso = Path(percorso).resolve()
+
     try:
         return str(percorso.relative_to(BASE_DIR))
     except ValueError:
@@ -23,27 +43,40 @@ def breve(percorso):
 
 
 def modelli_disponibili():
+    """Elenca i modelli che dispongono di un checkpoint ``best.pt``."""
     if not MODELS_DIR.is_dir():
         return []
-    return sorted(d.name for d in MODELS_DIR.iterdir() if (d / "weights" / "best.pt").is_file())
+
+    return sorted(
+        directory.name
+        for directory in MODELS_DIR.iterdir()
+        if (directory / "weights" / "best.pt").is_file()
+    )
 
 
 def trova_pesi(nome):
+    """Individua il file dei pesi a partire da un nome o da un percorso."""
     indicato = Path(nome).expanduser()
+
     if indicato.is_file():
         return indicato
+
     for base in (indicato, MODELS_DIR / indicato):
         candidato = base / "weights" / "best.pt"
+
         if candidato.is_file():
             return candidato
+
     return None
 
 
 def _ensure_utf8_console() -> None:
+    """Configura stdout e stderr in UTF-8 quando il runtime lo consente."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
+
         try:
             reconfigure(encoding="utf-8", errors="replace")
         except (ValueError, OSError):
@@ -51,17 +84,27 @@ def _ensure_utf8_console() -> None:
 
 
 def main(nome):
+    """Esegue il modello selezionato sui frame acquisiti dalla webcam."""
     _ensure_utf8_console()
+
     model_path = trova_pesi(nome)
     if model_path is None:
         print(f"Pesi non trovati per {nome}")
-        print("Uso: python single_model.py [nome del modello | percorso dei pesi .pt]")
+        print(
+            "Uso: python single_model.py "
+            "[nome del modello | percorso dei pesi .pt]"
+        )
         print("Senza argomenti usa il primo modello disponibile.")
+
         disponibili = modelli_disponibili()
         if disponibili:
             print(f"Modelli disponibili: {', '.join(disponibili)}")
         else:
-            print(f"Nessun modello con i pesi best.pt sotto {breve(MODELS_DIR)}")
+            print(
+                "Nessun modello con i pesi best.pt sotto "
+                f"{breve(MODELS_DIR)}"
+            )
+
         return 1
 
     model_name = model_path.parents[1].name
@@ -71,6 +114,7 @@ def main(nome):
     if not cap.isOpened():
         print("Webcam non disponibile.")
         return 1
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT)
 
@@ -78,6 +122,7 @@ def main(nome):
     print("Per uscire premi 'q' o chiudi la finestra del video.")
 
     esito = 0
+
     try:
         while True:
             ret, frame = cap.read()
@@ -86,24 +131,45 @@ def main(nome):
                 esito = 1
                 break
 
-            results = model(frame, verbose=False, conf=CONFIDENCE)
+            results = model(
+                frame,
+                verbose=False,
+                conf=CONFIDENCE,
+            )
 
-            for r in results:
-                for box in r.boxes:
+            # Disegna sul frame i rilevamenti restituiti dal modello.
+            for result in results:
+                for box in result.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    conf = float(box.conf[0])
-                    cls = int(box.cls[0])
-                    label = f"{model.names[cls]} {conf:.2f}"
+                    confidence = float(box.conf[0])
+                    class_id = int(box.cls[0])
+                    label = f"{model.names[class_id]} {confidence:.2f}"
 
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), BOX_COLOR, 4)
-                    cv2.putText(frame, label, (x1, max(y1 - 10, 20)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, BOX_COLOR, 3)
+                    cv2.rectangle(
+                        frame,
+                        (x1, y1),
+                        (x2, y2),
+                        BOX_COLOR,
+                        4,
+                    )
+                    cv2.putText(
+                        frame,
+                        label,
+                        (x1, max(y1 - 10, 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        BOX_COLOR,
+                        3,
+                    )
 
             cv2.imshow(WINDOW_TITLE, frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+
             if cv2.getWindowProperty(WINDOW_TITLE, cv2.WND_PROP_VISIBLE) < 1:
                 break
+
     finally:
         cap.release()
         cv2.destroyAllWindows()
@@ -116,11 +182,19 @@ if __name__ == "__main__":
         sys.exit(main(sys.argv[1]))
 
     disponibili = modelli_disponibili()
+
     if not disponibili:
-        print(f"Nessun modello con i pesi best.pt sotto {breve(MODELS_DIR)}")
-        print("Uso: python single_model.py [nome del modello | percorso dei pesi .pt]")
+        print(
+            "Nessun modello con i pesi best.pt sotto "
+            f"{breve(MODELS_DIR)}"
+        )
+        print(
+            "Uso: python single_model.py "
+            "[nome del modello | percorso dei pesi .pt]"
+        )
         print("Senza argomenti usa il primo modello disponibile.")
         sys.exit(1)
 
     print(f"Nessun modello indicato: si usa {disponibili[0]}")
     sys.exit(main(disponibili[0]))
+    

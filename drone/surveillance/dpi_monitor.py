@@ -80,10 +80,13 @@ class DpiMonitor:
         )
         self._now = time_source if time_source is not None else time.monotonic
         self._observing = False
+        # Elenco dei DPI mancanti comunicato per ultimo all'orologio.
+        self._missing_sent: tuple[str, ...] = ()
 
     def reset(self) -> None:
         self._latch.reset()
         self._observing = False
+        self._missing_sent = ()
 
     def update(
         self,
@@ -125,6 +128,16 @@ class DpiMonitor:
                 "title": "DPI di nuovo presenti",
                 "message": "Tutti i DPI sono di nuovo presenti",
             })
+        # Un DPI rientrato mentre altri mancano ancora non genera allarmi. Senza
+        # questo aggiornamento l'orologio continuerebbe a elencarlo fra i mancanti.
+        elif not alarms and mancanti and mancanti != self._missing_sent:
+            alarms.append({
+                "type": "dpi_missing_update",
+                "title": "Elenco dei DPI mancanti aggiornato",
+                "message": f"Mancano ancora: {', '.join(mancanti)}",
+                "missing": mancanti,
+            })
+        self._missing_sent = mancanti
         return alarms
 
     def _missing_alarm(self, key: str) -> dict[str, Any]:

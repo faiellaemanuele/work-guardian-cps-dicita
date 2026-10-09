@@ -62,6 +62,8 @@ class _Data:
     hr_filtered: np.ndarray
     spo2_raw: np.ndarray
     spo2_filtered: np.ndarray
+    bpm: np.ndarray
+    spo2: np.ndarray
     states: list
     step: float
     hr_alarm_times: np.ndarray
@@ -133,10 +135,12 @@ def _prepare(logger, output_dir: Path, plt, saved_paths: list) -> _Data:
         _series(samples, "hr_filtrato"),
         _series(samples, "spo2_grezzo"),
         _series(samples, "spo2_filtrato"),
+        _series(samples, "bpm"),
+        _series(samples, "spo2"),
     ]
     states = [s.get("stato") for s in samples]
     t, columns, states = _break_gaps(t, columns, states)
-    hr_raw, hr_filtered, spo2_raw, spo2_filtered = columns
+    hr_raw, hr_filtered, spo2_raw, spo2_filtered, bpm, spo2 = columns
 
     hr_alarm_times, spo2_alarm_times = [], []
     for event in events:
@@ -155,6 +159,7 @@ def _prepare(logger, output_dir: Path, plt, saved_paths: list) -> _Data:
         t=t,
         hr_raw=hr_raw, hr_filtered=hr_filtered,
         spo2_raw=spo2_raw, spo2_filtered=spo2_filtered,
+        bpm=bpm, spo2=spo2,
         states=states, step=step,
         hr_alarm_times=np.array(hr_alarm_times, dtype=np.float64),
         spo2_alarm_times=np.array(spo2_alarm_times, dtype=np.float64),
@@ -375,8 +380,14 @@ def _session(data: _Data, *, panel: dict, alarm_times: np.ndarray, alarm_prefix:
 def _hr_session(data: _Data) -> None:
     thr = APP_CONFIG.smartwatch_thresholds
     hr = data.hr_filtered
+    # Il punto si disegna sul valore filtrato, mentre il confronto con le
+    # soglie usa il battito arrotondato all'intero, come nel firmware.
+    bpm = data.bpm
     with np.errstate(invalid="ignore"):
-        hr_out = np.isfinite(hr) & ((hr > thr.bpm_max_in) | (hr < thr.bpm_min_in))
+        hr_out = (
+            np.isfinite(hr) & np.isfinite(bpm)
+            & ((bpm > thr.bpm_max_in) | (bpm < thr.bpm_min_in))
+        )
     _session(
         data,
         panel=dict(
@@ -399,7 +410,7 @@ def _spo2_session(data: _Data) -> None:
     thr = APP_CONFIG.smartwatch_thresholds
     spo2 = data.spo2_filtered
     with np.errstate(invalid="ignore"):
-        spo2_out = np.isfinite(spo2) & (spo2 < thr.spo2_min_in)
+        spo2_out = np.isfinite(spo2) & np.isfinite(data.spo2) & (data.spo2 < thr.spo2_min_in)
     _session(
         data,
         panel=dict(

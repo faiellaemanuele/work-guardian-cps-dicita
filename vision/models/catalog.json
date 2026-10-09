@@ -43,8 +43,7 @@
       "color": [0, 196, 255],
       "label": "Aree interdette",
       "classes": {
-        "Red Rectangle": "Area interdetta",
-        "Red_Rectangle": "Area interdetta"
+        "Red Rectangle": "Area interdetta"
       }
     }
   ]

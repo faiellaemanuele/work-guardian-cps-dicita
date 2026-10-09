@@ -156,6 +156,17 @@ def spo2_out_of_band(value: Any, thresholds) -> bool:
     return float(value) < thresholds.spo2_min_in
 
 
+# Per i campioni si usano i valori arrotondati all'intero (bpm e spo2), gli
+# stessi che il firmware confronta con le soglie, in quanto il filtrato con un
+# decimale, vicino a una soglia, può dare un esito diverso da quello dell'orologio.
+def sample_hr_out_of_band(sample, thresholds) -> bool:
+    return hr_out_of_band(sample.get("bpm"), thresholds)
+
+
+def sample_spo2_out_of_band(sample, thresholds) -> bool:
+    return spo2_out_of_band(sample.get("spo2"), thresholds)
+
+
 def alarm_causes(event, thresholds) -> tuple[bool, bool]:
     # L'evento dice solo che l'allarme è scattato, ma porta i valori del
     # momento della conferma: il firmware lo conferma solo con almeno uno dei

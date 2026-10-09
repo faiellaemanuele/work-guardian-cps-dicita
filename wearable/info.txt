@@ -1,0 +1,102 @@
+wearable
+
+Questa cartella raccoglie la componente wearable del progetto, costituita dallo
+smartwatch utilizzato per acquisire i parametri biometrici dell'operatore,
+ricevere segnalazioni dal sistema e fornire feedback visivi e aptici.
+
+Lo smartwatch è basato su Arduino Nano ESP32 e comunica con il PC tramite Wi-Fi
+e protocollo MQTT. I dati biometrici vengono acquisiti tramite sensore MAX30100
+e comprendono frequenza cardiaca e saturazione di ossigeno SpO2.
+
+Struttura della cartella
+
+wearable/
+├── info.txt
+├── smartwatch/
+├── schematics/
+└── biometric_sessions/
+
+1. smartwatch
+
+Contiene il firmware e la configurazione di rete dello smartwatch.
+
+smartwatch.ino
+
+È il firmware principale del dispositivo.
+
+Gestisce:
+
+- connessione alla rete Wi-Fi;
+- connessione al broker MQTT;
+- acquisizione dei dati dal sensore MAX30100;
+- filtraggio dei valori di frequenza cardiaca e SpO2;
+- macchina a stati per il monitoraggio delle condizioni biometriche;
+- ricezione degli allarmi provenienti dal sistema del drone;
+- gestione del display LCD;
+- LED di stato;
+- motore di vibrazione;
+- pulsante utente.
+
+Gli allarmi possono derivare sia dai parametri biometrici rilevati localmente,
+sia dai messaggi ricevuti dal sistema, ad esempio per DPI mancanti o accesso ad
+aree interdette.
+
+network_config.h
+
+Contiene i parametri di rete utilizzati dal firmware:
+
+- SSID della rete Wi-Fi;
+- password della rete;
+- indirizzo IP del PC che esegue il broker MQTT.
+
+La configurazione deve essere coerente con quella descritta in:
+
+    communication/docs/communication_setup.md
+
+2. schematics
+
+Contiene la documentazione hardware dello smartwatch.
+
+Gli schemi descrivono:
+
+- collegamenti tra Arduino Nano ESP32 e periferiche;
+- pin utilizzati;
+- alimentazione dei componenti;
+- collegamento del MAX30100;
+- collegamento del display LCD;
+- collegamento del pulsante e dei LED;
+- circuito di pilotaggio del motore di vibrazione.
+
+Lo schema elettrico rappresenta i collegamenti funzionali del circuito e non
+dipende dalla disposizione fisica dei componenti all'interno del dispositivo.
+
+3. biometric_sessions
+
+Contiene le sessioni biometriche registrate durante le prove del sistema.
+
+Ogni sessione è salvata in una cartella identificata da data e ora e può
+contenere:
+
+- dati biometrici esportati in formato Excel;
+- andamento della frequenza cardiaca;
+- andamento della SpO2;
+- confronto tra segnale grezzo e filtrato per la frequenza cardiaca;
+- confronto tra segnale grezzo e filtrato per la SpO2.
+
+Questi dati permettono di analizzare il comportamento del sistema di
+acquisizione e verificare l'effetto del filtraggio applicato dal software.
+
+Flusso operativo
+
+Il funzionamento della componente wearable può essere riassunto come segue:
+
+1. lo smartwatch si collega alla rete Wi-Fi del progetto;
+2. stabilisce la connessione MQTT con il broker eseguito sul PC;
+3. acquisisce i dati biometrici dal MAX30100;
+4. filtra e valuta frequenza cardiaca e SpO2;
+5. aggiorna lo stato del dispositivo e l'interfaccia utente;
+6. riceve eventuali allarmi generati dal sistema del drone;
+7. segnala le condizioni rilevanti tramite display, LED e vibrazione.
+
+La componente wearable completa quindi il sistema di supervisione fornendo un
+canale diretto tra il sistema centrale e l'operatore.

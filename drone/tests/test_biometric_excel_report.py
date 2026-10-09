@@ -80,6 +80,23 @@ def test_the_watch_sheet_marks_the_samples_out_of_the_alarm_thresholds():
     assert fuori.count("No") == len(fuori) - 7
 
 
+def test_the_watch_sheet_judges_the_thresholds_like_the_firmware():
+    if not _openpyxl_available():
+        return
+    log = BiometricDataLogger()
+    for i, hr in enumerate((120.4, 120.6)):
+        log.log_message(
+            {"bpm": round(hr), "spo2": 97, "stato": "NORMALE", "lettura_valida": True,
+             "hr_filtrato": hr, "spo2_filtrato": 97.0},
+            timestamp=100.0 + i * 0.5,
+        )
+    ws = _workbook(log)["Orologio"]
+    headers = _headers(ws)
+    colonna = headers.index("Battito fuori soglia") + 1
+    # 120,4 bpm l'orologio li confronta come 120, dentro la soglia; 120,6 come 121
+    assert [ws.cell(r, colonna).value for r in (2, 3)] == ["No", "Sì"]
+
+
 def test_the_alarm_time_is_counted_from_the_start_of_the_session():
     if not _openpyxl_available():
         return

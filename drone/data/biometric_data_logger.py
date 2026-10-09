@@ -82,6 +82,10 @@ class BiometricDataLogger:
             "hr_filtrato": hr_filtered,
             "spo2_grezzo": _optional_float(message.get("spo2_grezzo")),
             "spo2_filtrato": spo2_filtered,
+            # Valori filtrati arrotondati all'intero, gli stessi che il firmware
+            # confronta con le soglie dell'allarme.
+            "bpm": _optional_float(message.get("bpm")),
+            "spo2": _optional_float(message.get("spo2")),
         }
         with self._lock:
             self._samples.append(sample)

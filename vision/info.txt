@@ -1,0 +1,109 @@
+vision
+
+Questa cartella raccoglie l'intera componente di visione artificiale del
+progetto. Comprende sia i modelli YOLO utilizzati dal sistema durante il volo,
+sia gli strumenti necessari per preparare i dataset, addestrare nuovi modelli,
+analizzarne i risultati, testarli e distribuirli nell'area dei modelli in
+servizio.
+
+Struttura generale
+
+vision/
+├── models/
+└── training/
+
+1. models
+
+La cartella models contiene i modelli effettivamente disponibili al sistema.
+
+Sono presenti quattro modelli principali:
+
+- Aree_Interdette
+  Rileva le aree che devono essere considerate non accessibili o pericolose.
+
+- Caduta_delle_Persone
+  Rileva situazioni riconducibili alla caduta di una persona.
+
+- Protezioni_Collettive
+  Rileva elementi di protezione collettiva presenti nell'ambiente di lavoro.
+
+- Protezioni_Individuali
+  Rileva i dispositivi di protezione individuale e la loro eventuale assenza.
+
+Ogni cartella di modello contiene i pesi addestrati e i principali file che
+descrivono configurazione, risultati e caratteristiche del training.
+
+Il file catalog.json costituisce il catalogo centrale dei modelli utilizzabili
+dal sistema. Definisce quali modelli sono disponibili e contiene le
+informazioni necessarie per identificarli e caricarli in modo uniforme.
+
+Questa cartella rappresenta quindi l'area dei modelli in servizio.
+
+2. training
+
+La cartella training contiene gli strumenti utilizzati durante lo sviluppo e
+l'addestramento dei modelli.
+
+È suddivisa in tre sezioni principali.
+
+dataset_prep
+
+Contiene gli script per la preparazione dei dataset YOLO:
+
+- class_remapper/remap.py
+  Rimappa gli identificativi delle classi ed elimina quelle non necessarie.
+
+- dataset_splitter/split.py
+  Suddivide il dataset in train, validation e test con proporzioni 80/10/10.
+
+- polygon_to_box/polygon_to_box.py
+  Converte annotazioni basate su poligoni o maschere in bounding box.
+
+trainer
+
+Contiene gli strumenti per l'addestramento e la gestione dei modelli:
+
+- check_cuda.py
+  Verifica la disponibilità di CUDA e della GPU.
+
+- train.py
+  Avvia un nuovo addestramento YOLO.
+
+- resume.py
+  Riprende un addestramento precedente dal checkpoint last.pt.
+
+- plot_results.py
+  Visualizza l'andamento delle loss e delle metriche mAP.
+
+- deploy.py
+  Trasferisce un modello addestrato nell'area vision/models, rendendolo
+  disponibile al sistema.
+
+I run presenti in vision/training/trainer/models rappresentano risultati di
+addestramento e non sono necessariamente modelli già in servizio.
+
+tester
+
+Contiene gli strumenti per verificare i modelli tramite webcam:
+
+- single_model.py
+  Esegue un singolo modello e visualizza bounding box, classe e confidenza.
+
+- multi_model.py
+  Esegue contemporaneamente più modelli definiti in catalog.json e sovrappone
+  i relativi risultati sullo stesso flusso video.
+
+Flusso di lavoro
+
+Il flusso tipico della componente vision è il seguente:
+
+1. preparazione del dataset;
+2. avvio o ripresa dell'addestramento;
+3. analisi dei risultati ottenuti;
+4. test del modello;
+5. deploy del modello;
+6. utilizzo del modello da parte del sistema di volo.
+
+La distinzione tra training e models è importante: training contiene gli
+strumenti e i run di sviluppo, mentre models contiene esclusivamente i modelli
+destinati all'utilizzo operativo nel progetto.

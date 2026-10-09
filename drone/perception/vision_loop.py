@@ -455,7 +455,7 @@ class VisionLoop:
         with self._detection_lock:
             return self._cached_detections
 
-    def _log_latest_pose_estimate(self):
+    def _log_latest_pose_estimate(self, flying: bool):
         if self.pose_estimator is None:
             return
 
@@ -480,7 +480,9 @@ class VisionLoop:
         self.last_filtered_pose_estimate = filtered_pose
         self.last_pose_estimate_at = time.monotonic()
 
-        if self.flight_data_logger is not None:
+        # Le pose si registrano solo in volo, poiché quelle stimate a terra, prima
+        # del decollo o dopo l'atterraggio, finirebbero nella sessione di volo.
+        if self.flight_data_logger is not None and flying:
             self.flight_data_logger.log_pose_pair(
                 raw_pose_estimate=raw_pose,
                 filtered_pose_estimate=filtered_pose,
@@ -619,7 +621,7 @@ class VisionLoop:
                 "Non è stato possibile disegnare i riquadri del riconoscimento sull'immagine corrente",
             )
 
-    def _estimate_pose(self, analysis_frame, display_frame, frame_is_undistorted):
+    def _estimate_pose(self, analysis_frame, display_frame, frame_is_undistorted, flying):
         if not self._pose_estimation_available():
             return display_frame
         try:
@@ -628,7 +630,7 @@ class VisionLoop:
                 drawing_frame=display_frame,
                 frame_is_undistorted=frame_is_undistorted,
             )
-            self._log_latest_pose_estimate()
+            self._log_latest_pose_estimate(flying)
         except Exception:
             self._throttled_warning(
                 "pose_estimate",
@@ -714,6 +716,7 @@ class VisionLoop:
 
         display_frame = self._estimate_pose(
             analysis_frame, display_frame, analysis_frame_is_undistorted,
+            bool(getattr(controller, "is_flying", False)),
         )
 
         if dashboard is not None and getattr(dashboard, "enabled", False):

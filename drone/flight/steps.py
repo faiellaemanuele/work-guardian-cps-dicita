@@ -58,6 +58,7 @@ _ALARM_LEVELS = {
     "restricted_area_ok": "info",
     "fall": "critical",
     "dpi_missing": "warning",
+    "dpi_missing_update": "warning",
     "dpi_ok": "info",
 }
 
@@ -66,14 +67,16 @@ _ALARM_LEVELS = {
 # l'allarme serve a chi sorveglia e resta nel Log degli alert.
 _WATCH_TYPES = {
     "dpi_missing": "DPI_MANCANTE",
+    "dpi_missing_update": "DPI_MANCANTE",
     "dpi_ok": "DPI_OK",
     "restricted_area": "AREA_VIETATA",
     "restricted_area_ok": "AREA_OK",
 }
 
 # Eventi che vanno solo all'orologio, senza riga nel Log degli alert: spengono
-# un allarme sull'orologio, ma non sono pericoli da mostrare.
-_SILENT_KINDS = {"dpi_ok", "restricted_area_ok"}
+# un allarme sull'orologio o ne aggiornano l'elenco dei DPI mancanti, ma non
+# sono pericoli nuovi da mostrare.
+_SILENT_KINDS = {"dpi_ok", "dpi_missing_update", "restricted_area_ok"}
 
 
 def _watch_detail(alert: dict) -> Optional[str]:

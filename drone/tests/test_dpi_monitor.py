@@ -273,6 +273,49 @@ def test_dropped_frame_does_not_restart_the_streak():
     assert _items(m.update(detections_by_model=missing, supervision_active=True)) == {"helmet"}
 
 
+def test_watch_list_is_updated_when_one_dpi_returns():
+    clk = FakeClock()
+    m = _monitor(clear_after_sec=1.0, time_source=clk)
+    both = _snapshot("Without_Helmet", "Without_Vest")
+    vest = _snapshot("Without_Vest")
+    alarms = m.update(detections_by_model=both, supervision_active=True)
+    assert {a["missing"] for a in alarms} == {("elmetto", "gilet")}
+    clk.advance(0.5)
+    assert m.update(detections_by_model=vest, supervision_active=True) == []
+    clk.advance(0.6)
+    (update,) = m.update(detections_by_model=vest, supervision_active=True)
+    assert update["type"] == "dpi_missing_update"
+    assert update["missing"] == ("gilet",)
+    clk.advance(0.1)
+    assert m.update(detections_by_model=vest, supervision_active=True) == []
+
+
+def test_new_missing_dpi_carries_the_list_without_a_separate_update():
+    m = _monitor()
+    helmet = _snapshot("Without_Helmet")
+    vest = _snapshot("Without_Vest")
+    m.update(detections_by_model=helmet, supervision_active=True)
+    alarms = m.update(detections_by_model=vest, supervision_active=True)
+    assert _tipi(alarms) == {"dpi_missing"}
+    assert alarms[0]["missing"] == ("gilet",)
+
+
+def test_last_dpi_returning_sends_only_dpi_ok():
+    m = _monitor()
+    m.update(detections_by_model=_snapshot("Without_Helmet", "Without_Vest"), supervision_active=True)
+    assert _tipi(m.update(detections_by_model=[], supervision_active=True)) == {"dpi_ok"}
+
+
+def test_reset_forgets_the_list_sent_to_the_watch():
+    m = _monitor()
+    both = _snapshot("Without_Helmet", "Without_Vest")
+    m.update(detections_by_model=both, supervision_active=True)
+    m.reset()
+    alarms = m.update(detections_by_model=both, supervision_active=True)
+    assert _items(alarms) == {"helmet", "vest"}
+    assert {a["missing"] for a in alarms} == {("elmetto", "gilet")}
+
+
 def test_item_keys_are_the_four_dpi():
     assert set(dpi_item_names()) == {"elmetto", "occhiali", "gilet", "scarpe"}
 

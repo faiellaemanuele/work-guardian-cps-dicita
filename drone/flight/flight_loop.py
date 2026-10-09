@@ -12,6 +12,7 @@ from drone.flight.steps import handle_autonomy_step, handle_dpi_step, handle_per
 from drone.config.logging_setup import ensure_utf8_console, configure_logging
 from drone.flight.postflight import release_mission, run_postflight
 from drone.flight.preflight import Subsystems, arm_mission, run_startup
+from drone.hardware.joystick import discard_button_presses
 from drone.perception.vision_loop import start_mqtt_client, update_watch_mission
 from drone.ui.console import (
     print_event,
@@ -48,6 +49,8 @@ def main():
             pygame.display.iconify()
 
             mark_runtime_started()
+
+            discard_button_presses()
 
             if not run_flight(subsystems):
                 break

@@ -32,12 +32,21 @@ def test_la_telemetria_tiene_grezzo_e_filtrato():
     assert campione["lettura_valida"] is True
 
 
+def test_la_telemetria_tiene_anche_i_valori_interi_confrontati_dal_firmware():
+    log = BiometricDataLogger()
+    log.log_message(telemetria(80.2, 75.4, 96.0, 97.1), timestamp=1.0)
+
+    campione = log.samples()[0]
+    assert campione["bpm"] == 75.0
+    assert campione["spo2"] == 97.0
+
+
 def test_un_valore_null_resta_un_buco_e_non_diventa_zero():
     log = BiometricDataLogger()
     log.log_message(telemetria(None, None, None, None, "RICERCA_SEGNALE"), timestamp=1.0)
 
     campione = log.samples()[0]
-    for chiave in ("hr_grezzo", "hr_filtrato", "spo2_grezzo", "spo2_filtrato"):
+    for chiave in ("hr_grezzo", "hr_filtrato", "spo2_grezzo", "spo2_filtrato", "bpm", "spo2"):
         assert campione[chiave] is None
     assert campione["lettura_valida"] is False
 

@@ -1,21 +1,27 @@
 Protezioni_Collettive
 
-Riconosce le reti di sicurezza, cioè le protezioni collettive del cantiere.
-Una sola classe, Safety_Net. Su questo modello si regge il controllo della
-presenza della rete durante le soste di supervisione. I pesi che il sistema di
-volo carica sono weights/best.pt.
+Il modello rileva le reti di sicurezza utilizzate come protezioni collettive
+all'interno del cantiere. È addestrato su una sola classe, Safety_Net.
 
-Addestrato con Ultralytics 8.4.30 (Python 3.12.5, torch 2.11.0+cu130) su una
-GeForce RTX 4050 Laptop (6 GB), partendo da yolo26s.pt e dal dataset
-verWhiteNetsFull_Lab_Patch_Again_Tables. Previste 50 epoche, con arresto
-anticipato se la validazione non migliora per 20 epoche di fila (patience=20).
-Modello risultante: 122 livelli, 9.465.567 parametri, 20,5 GFLOPs.
+Durante le soste di supervisione, le rilevazioni prodotte da questo modello
+vengono utilizzate per verificare la presenza della rete di sicurezza nelle
+aree monitorate. Il sistema di volo utilizza i pesi contenuti in
+weights/best.pt.
+
+Addestramento
+
+Il modello è stato addestrato con Ultralytics 8.4.30, Python 3.12.5 e
+PyTorch 2.11.0+cu130 su GPU NVIDIA GeForce RTX 4050 Laptop, partendo dai pesi
+preaddestrati yolo26s.pt e dal dataset
+verWhiteNetsFull_Lab_Patch_Again_Tables.
+
+Configurazione principale:
 
     model = YOLO('yolo26s.pt')
     model.train(
-        data='./datasets/verWhiteNetsFull_Lab_Patch_Again_Tables/data.yaml',
-        name='verWhiteNetsFull_Lab_Patch_Again_Tables_n50s',
-        project='models',
+        data='vision/training/trainer/datasets/verWhiteNetsFull_Lab_Patch_Again_Tables/data.yaml',
+        name='Protezioni_Collettive',
+        project='vision/models',
         epochs=50,
         patience=20,
         imgsz=640,
@@ -25,10 +31,19 @@ Modello risultante: 122 livelli, 9.465.567 parametri, 20,5 GFLOPs.
         close_mosaic=0,
     )
 
-Validazione di best.pt:
+L'addestramento ha completato tutte le 50 epoche previste senza attivare
+early stopping. Il checkpoint best.pt corrisponde all'epoca 50, che ha ottenuto
+il miglior valore di mAP50-95 registrato durante l'addestramento.
+
+Il modello risultante è composto da 122 livelli, 9.465.567 parametri e richiede
+20,5 GFLOPs.
+
+Validazione di best.pt
 
     classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
     tutte           8         6        0,992      1,000   0,995      0,869
 
-Per immagine: 2,4 ms di preparazione, 44,0 ms di inferenza, 1,5 ms di
-post-elaborazione.
+Tempi medi per immagine:
+- preparazione: 2,4 ms
+- inferenza: 44,0 ms
+- post-elaborazione: 1,5 ms

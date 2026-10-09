@@ -1,17 +1,30 @@
 Protezioni_Individuali
 
-Riconosce i dispositivi di protezione individuale e, soprattutto, la loro
-assenza: alle quattro classi Helmet, Vest, Goggles e Safety_shoes se ne
-affiancano altrettante con il prefisso Without_, ed è su queste che si regge
-l'allerta DPI delle soste di supervisione. I pesi che il sistema di volo carica
-sono weights/best.pt.
+Il modello rileva i dispositivi di protezione individuale (DPI) e la loro
+eventuale assenza. È addestrato su otto classi:
 
-Addestrato con Ultralytics 8.4.30 (Python 3.12.5, torch 2.11.0+cu130) su una
-GeForce RTX 4050 Laptop, partendo da yolo26s.pt e dal dataset
-verPPE_original_clean. Ha eseguito tutte le 300 epoche previste, senza che
-l'arresto anticipato (patience=50) scattasse, e best.pt conserva i pesi
-dell'epoca 297. Modello risultante: 122 livelli, 9.468.276 parametri, 20,5
-GFLOPs.
+- Helmet
+- Vest
+- Goggles
+- Safety_shoes
+- Without_Helmet
+- Without_Vest
+- Without_Goggles
+- Without_Safety_shoes
+
+Durante le soste di supervisione, le classi con prefisso Without_ vengono
+utilizzate per individuare possibili violazioni relative all'uso dei DPI.
+Il sistema di volo utilizza i pesi contenuti in weights/best.pt.
+
+Addestramento
+
+Il modello è stato addestrato con Ultralytics 8.4.30, Python 3.12.5 e
+PyTorch 2.11.0+cu130 su GPU NVIDIA GeForce RTX 4050 Laptop, utilizzando il
+dataset verPPE_original_clean. L'addestramento è stato avviato a partire dai
+pesi preaddestrati yolo26s.pt e successivamente ripreso dal checkpoint
+weights/last.pt.
+
+Configurazione principale dell'addestramento iniziale:
 
     model = YOLO('yolo26s.pt')
     model.train(
@@ -27,26 +40,33 @@ GFLOPs.
         close_mosaic=0,
     )
 
-La sessione è stata interrotta e ripresa dal checkpoint:
+Ripresa dell'addestramento:
 
     model = YOLO('vision/models/Protezioni_Individuali/weights/last.pt')
     model.train(resume=True)
 
-Le 300 epoche sono il totale dell'addestramento, non della sola ripresa:
-results.csv le riporta tutte, dalla 1 alla 300.
+Le 300 epoche indicate rappresentano il totale dell'addestramento, includendo
+la parte eseguita prima della ripresa. L'early stopping non è stato attivato.
+Il checkpoint best.pt corrisponde all'epoca 297, che ha ottenuto il miglior
+valore di mAP50-95 registrato durante l'addestramento.
 
-Validazione di best.pt:
+Il modello risultante è composto da 122 livelli, 9.468.276 parametri e richiede
+20,5 GFLOPs.
 
-    classe                 immagini   istanze   precisione   richiamo   mAP50   mAP50-95
-    tutte                      1160      4722        0,938      0,901   0,953      0,722
-    Helmet                      598      1182        0,975      0,955   0,986      0,770
-    Vest                        358       676        0,978      0,929   0,973      0,786
-    Goggles                     298       363        0,945      0,904   0,954      0,698
-    Safety_shoes                333       713        0,872      0,840   0,896      0,611
-    Without_Helmet              279       429        0,925      0,892   0,958      0,697
-    Without_Vest                356       574        0,942      0,939   0,974      0,770
-    Without_Goggles             284       394        0,958      0,864   0,940      0,673
-    Without_Safety_shoes        184       391        0,911      0,887   0,946      0,768
+Validazione di best.pt
 
-Per immagine: 0,2 ms di preparazione, 5,2 ms di inferenza, 0,2 ms di
-post-elaborazione.
+    classe                  immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte                       1160      4722        0,938      0,901   0,953      0,722
+    Helmet                       598      1182        0,975      0,955   0,986      0,770
+    Vest                         358       676        0,978      0,929   0,973      0,786
+    Goggles                      298       363        0,945      0,904   0,954      0,698
+    Safety_shoes                 333       713        0,872      0,840   0,896      0,611
+    Without_Helmet               279       429        0,925      0,892   0,958      0,697
+    Without_Vest                 356       574        0,942      0,939   0,974      0,770
+    Without_Goggles              284       394        0,958      0,864   0,940      0,673
+    Without_Safety_shoes         184       391        0,911      0,887   0,946      0,768
+
+Tempi medi per immagine:
+- preparazione: 0,2 ms
+- inferenza: 5,2 ms
+- post-elaborazione: 0,2 ms

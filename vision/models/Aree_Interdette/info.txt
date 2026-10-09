@@ -1,17 +1,20 @@
 Aree_Interdette
 
-Riconosce i rettangoli rossi che delimitano a pavimento le aree da non
-superare. Una sola classe, Red Rectangle. Insieme alle persone riconosciute da
-Caduta_delle_Persone alimenta l'allarme di superamento, uno dei controlli delle
-soste di supervisione. I pesi che il sistema di volo carica sono
-weights/best.pt.
+Il modello rileva i rettangoli rossi utilizzati per delimitare a pavimento le
+aree interdette. È addestrato su una sola classe, Red Rectangle.
 
-Addestrato con Ultralytics 8.4.30 (Python 3.12.5, torch 2.11.0+cu130) su una
-GeForce RTX 4050 Laptop, partendo da yolo26s.pt e dal dataset verRedRect_Lab.
-Delle 30 epoche previste ne ha eseguite 18: nelle ultime 10 i risultati di
-validazione non sono migliorati, così è scattato l'arresto anticipato
-(patience=10) e best.pt conserva i pesi dell'epoca 8. Modello risultante: 122
-livelli, 9.465.567 parametri, 20,5 GFLOPs.
+Durante le soste di supervisione, le rilevazioni prodotte da questo modello
+vengono combinate con quelle delle persone fornite dal modello
+Caduta_delle_Persone per verificare l'eventuale ingresso in un'area interdetta.
+Il sistema di volo utilizza i pesi contenuti in weights/best.pt.
+
+Addestramento
+
+Il modello è stato addestrato con Ultralytics 8.4.30, Python 3.12.5 e
+PyTorch 2.11.0+cu130 su GPU NVIDIA GeForce RTX 4050 Laptop, partendo dai pesi
+preaddestrati yolo26s.pt e dal dataset verRedRect_Lab.
+
+Configurazione principale:
 
     model = YOLO('yolo26s.pt')
     model.train(
@@ -27,10 +30,19 @@ livelli, 9.465.567 parametri, 20,5 GFLOPs.
         close_mosaic=0,
     )
 
-Validazione di best.pt:
+L'addestramento si è arrestato dopo 18 epoche per early stopping, poiché le
+metriche di validazione non erano migliorate per 10 epoche consecutive. Il
+checkpoint best.pt corrisponde all'epoca 8.
+
+Il modello risultante è composto da 122 livelli, 9.465.567 parametri e richiede
+20,5 GFLOPs.
+
+Validazione di best.pt
 
     classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
     tutte           5         5        0,978      1,000   0,995      0,947
 
-Per immagine: 0,3 ms di preparazione, 8,2 ms di inferenza, 0,2 ms di
-post-elaborazione.
+Tempi medi per immagine:
+- preparazione: 0,3 ms
+- inferenza: 8,2 ms
+- post-elaborazione: 0,2 ms

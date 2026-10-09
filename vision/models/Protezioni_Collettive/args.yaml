@@ -1,7 +1,7 @@
 task: detect
 mode: train
 model: yolo26s.pt
-data: ./datasets/verWhiteNetsFull_Lab_Patch_Again_Tables/data.yaml
+data: vision/training/trainer/datasets/verWhiteNetsFull_Lab_Patch_Again_Tables/data.yaml
 epochs: 50
 time: null
 patience: 20
@@ -12,8 +12,8 @@ save_period: -1
 cache: false
 device: '0'
 workers: 8
-project: models
-name: verWhiteNetsFull_Lab_Patch_Again_Tables_n50s
+project: vision/models
+name: Protezioni_Collettive
 exist_ok: false
 pretrained: true
 optimizer: auto
@@ -106,4 +106,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: C:\Users\feder\Downloads\WorkGuardian\Model Setup\ModelTrainer\runs\detect\models\verWhiteNetsFull_Lab_Patch_Again_Tables_n50s
+save_dir: vision/models/Protezioni_Collettive

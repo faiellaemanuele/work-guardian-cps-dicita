@@ -247,6 +247,18 @@ def read_events():
     return actions
 
 
+def discard_button_presses():
+    # Fra la scelta dello scenario e il primo giro del volo il programma carica
+    # i modelli e apre il video senza leggere il controller. Una pressione
+    # rimasta in coda verrebbe eseguita al primo giro, per esempio come decollo.
+    # Gli eventi di collegamento e scollegamento restano in coda, perché da
+    # questi dipende la chiusura del volo quando il controller si scollega.
+    try:
+        pygame.event.clear((pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP))
+    except pygame.error:
+        pass
+
+
 def _setup_button_action(button, mapping):
     if button == mapping.button_setup_confirm:
         return "confirm"

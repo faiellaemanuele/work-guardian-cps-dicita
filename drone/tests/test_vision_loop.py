@@ -496,6 +496,48 @@ def test_i_tag_visti_arrivano_alla_mappa_del_cruscotto():
     assert cruscotto.tag_visti == {8, 16}
 
 
+class _StimatoreConPosa(_StimatoreConTag):
+    last_fused_body_pose = {
+        "position_world": {"x": 0.1, "y": 1.6, "z": 0.05},
+        "yaw_world_deg": 90.0,
+        "source": "weighted_average",
+        "source_tag_ids": [3],
+    }
+
+
+class _ControllerInVolo(_FrameController):
+    def __init__(self, frame, *, in_volo):
+        super().__init__(frame)
+        self.is_flying = in_volo
+
+
+class _RegistroPose:
+    def __init__(self):
+        self.coppie = 0
+
+    def log_pose_pair(self, *, raw_pose_estimate, filtered_pose_estimate):
+        self.coppie += 1
+
+
+def test_a_terra_le_pose_non_finiscono_nei_dati_del_volo():
+    registro = _RegistroPose()
+    ciclo = _vision_loop(pose_estimator=_StimatoreConPosa(), flight_data_logger=registro)
+
+    ciclo.step(_ControllerInVolo(_frame(), in_volo=False))
+
+    assert registro.coppie == 0
+    assert ciclo.get_latest_pose_estimate() is not None
+
+
+def test_in_volo_le_pose_finiscono_nei_dati_del_volo():
+    registro = _RegistroPose()
+    ciclo = _vision_loop(pose_estimator=_StimatoreConPosa(), flight_data_logger=registro)
+
+    ciclo.step(_ControllerInVolo(_frame(), in_volo=True))
+
+    assert registro.coppie == 1
+
+
 @contextlib.contextmanager
 def _orologio_mai_sentito():
     modulo = sys.modules["drone.perception.vision_loop"]

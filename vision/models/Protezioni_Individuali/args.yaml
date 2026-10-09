@@ -1,6 +1,6 @@
 task: detect
 mode: train
-model: vision/models/Protezioni_individuali/weights/last.pt
+model: vision/models/Protezioni_Individuali/weights/last.pt
 data: vision/training/trainer/datasets/verPPE_original_clean/data.yaml
 epochs: 300
 time: null
@@ -13,7 +13,7 @@ cache: false
 device: '0'
 workers: 8
 project: vision/models
-name: Protezioni_individuali
+name: Protezioni_Individuali
 exist_ok: false
 pretrained: true
 optimizer: auto
@@ -24,7 +24,7 @@ single_cls: false
 rect: false
 cos_lr: false
 close_mosaic: 0
-resume: vision/models/Protezioni_individuali/weights/last.pt
+resume: vision/models/Protezioni_Individuali/weights/last.pt
 amp: true
 fraction: 1.0
 profile: false
@@ -106,4 +106,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: vision/models/Protezioni_individuali
+save_dir: vision/models/Protezioni_Individuali

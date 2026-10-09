@@ -639,6 +639,25 @@ def test_i_dpi_mancanti_arrivano_all_orologio_come_avviso():
     assert inviato["dettaglio"] == "Elmetto, Gilet"
 
 
+def test_l_elenco_aggiornato_dei_dpi_arriva_all_orologio_senza_riga_nel_log():
+    banco = _Banco(None, ultimo_comando={"supervision_stop_active": True})
+    monitor = _Monitor(
+        banco.registro,
+        [{
+            "type": "dpi_missing_update",
+            "message": "Mancano ancora: gilet",
+            "missing": ("gilet",),
+        }],
+    )
+
+    _esegui_sorveglianza(banco, monitor, dpi=True)
+
+    inviato = banco.vision_loop.allarmi_inviati[0]
+    assert inviato["tipo"] == "DPI_MANCANTE"
+    assert inviato["dettaglio"] == "Gilet"
+    assert banco.registro.eventi == []
+
+
 def test_la_caduta_non_arriva_all_orologio_ma_resta_critica():
     banco = _Banco(None, ultimo_comando={"supervision_stop_active": True})
     monitor = _Monitor(

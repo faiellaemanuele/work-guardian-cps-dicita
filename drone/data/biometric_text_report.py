@@ -7,13 +7,13 @@ from drone.data.biometric_report_stats import (
     MAX_GAP_SEC,
     alarm_cause_label,
     format_duration,
-    hr_out_of_band,
     mean_abs_delta,
     monitored_duration_sec,
     relative_time,
+    sample_hr_out_of_band,
+    sample_spo2_out_of_band,
     sample_step_sec,
     session_clock,
-    spo2_out_of_band,
     state_durations,
     state_label,
     telemetry_gaps,
@@ -36,13 +36,13 @@ _COLUMNS = [
     ("stato", "stato del firmware dell'orologio in quel momento"),
     ("lettura_valida", "true quando il sensore stava davvero misurando"),
     ("hr_grezzo_bpm", "battito letto dal sensore MAX30100, senza filtro [bpm]"),
-    ("hr_filtrato_bpm", "battito dopo il filtro dell'orologio, quello su cui decide l'allarme [bpm]"),
+    ("hr_filtrato_bpm", "battito dopo il filtro dell'orologio; arrotondato all'intero, e' quello su cui decide l'allarme [bpm]"),
     ("scarto_hr_bpm", "differenza hr_filtrato_bpm - hr_grezzo_bpm [bpm]"),
     ("spo2_grezzo_pct", "saturazione letta dal sensore, senza filtro [%]"),
     ("spo2_filtrato_pct", "saturazione dopo il filtro dell'orologio [%]"),
     ("scarto_spo2_pct", "differenza spo2_filtrato_pct - spo2_grezzo_pct [%]"),
-    ("hr_fuori_soglia", "true quando hr_filtrato_bpm e' oltre le soglie di ingresso dell'allarme"),
-    ("spo2_fuori_soglia", "true quando spo2_filtrato_pct e' sotto la soglia di ingresso dell'allarme"),
+    ("hr_fuori_soglia", "true quando hr_filtrato_bpm, arrotondato all'intero come nell'orologio, e' oltre le soglie di ingresso dell'allarme"),
+    ("spo2_fuori_soglia", "true quando spo2_filtrato_pct, arrotondato all'intero come nell'orologio, e' sotto la soglia di ingresso dell'allarme"),
 ]
 
 _STATS_COLUMNS = ["hr_grezzo", "hr_filtrato", "spo2_grezzo", "spo2_filtrato"]
@@ -67,8 +67,8 @@ def _overview_lines(samples, events, thresholds) -> list[str]:
 
     entro_hr = percent_within(
         samples,
-        lambda c: not hr_out_of_band(c["hr_filtrato"], thresholds),
-        lambda c: c.get("hr_filtrato") is not None,
+        lambda c: not sample_hr_out_of_band(c, thresholds),
+        lambda c: c.get("bpm") is not None,
     )
     if entro_hr is not None:
         righe.append(
@@ -77,8 +77,8 @@ def _overview_lines(samples, events, thresholds) -> list[str]:
         )
     entro_spo2 = percent_within(
         samples,
-        lambda c: not spo2_out_of_band(c["spo2_filtrato"], thresholds),
-        lambda c: c.get("spo2_filtrato") is not None,
+        lambda c: not sample_spo2_out_of_band(c, thresholds),
+        lambda c: c.get("spo2") is not None,
     )
     if entro_spo2 is not None:
         righe.append(
@@ -173,8 +173,8 @@ def save_data_to_file(logger, output_path: Path, thresholds) -> Path:
                 f"{format_optional_float(campione.get('spo2_grezzo'), 2)},"
                 f"{format_optional_float(campione.get('spo2_filtrato'), 2)},"
                 f"{format_optional_float(_delta(campione.get('spo2_filtrato'), campione.get('spo2_grezzo')), 2)},"
-                f"{format_bool(hr_out_of_band(campione.get('hr_filtrato'), thresholds))},"
-                f"{format_bool(spo2_out_of_band(campione.get('spo2_filtrato'), thresholds))}\n"
+                f"{format_bool(sample_hr_out_of_band(campione, thresholds))},"
+                f"{format_bool(sample_spo2_out_of_band(campione, thresholds))}\n"
             )
 
         write_stats_footer(f, entries=samples, numeric_columns=_STATS_COLUMNS)
