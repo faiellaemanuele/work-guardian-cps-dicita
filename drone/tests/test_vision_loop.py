@@ -968,6 +968,20 @@ def test_l_allarme_biometrico_dell_orologio_entra_nel_log_degli_alert():
     assert opzioni["channel"] == "alert"
 
 
+def test_l_allarme_biometrico_senza_spo2_la_mostra_come_mancante():
+    modulo = sys.modules["drone.perception.vision_loop"]
+    messaggio = _MessaggioMqtt(
+        "cantiere/sensori/orologio",
+        {"bpm": 25, "spo2": None, "evento": "BIOMETRIA_ANOMALA"},
+    )
+    with _alert_catturati() as catturati:
+        modulo._on_mqtt_message(None, None, messaggio)
+
+    assert len(catturati) == 1
+    testo, _ = catturati[0]
+    assert testo == "Orologio: 25 bpm, SpO2 --"
+
+
 def test_la_telemetria_dell_orologio_non_entra_nel_log_degli_alert():
     modulo = sys.modules["drone.perception.vision_loop"]
     telemetria = _MessaggioMqtt(

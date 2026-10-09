@@ -2,9 +2,6 @@
 // LCD 16x2:   RS=D7, EN=D8, D4..D7 = A0..A3 (RW a GND)
 // MAX30100:   VIN=3V3, GND, SDA=A4, SCL=A5
 // Attuatori:  vibrazione D2, pulsante D3 (verso GND), LED blu D4, verde D5, rosso D6
-// DA CONTROLLARE: i numeri di pin qui sopra sono quelli "di progetto" nel
-// codice - vanno confermati uno per uno con il collegamento reale sulla
-// breadboard (vedi discussione separata sul cablaggio) prima di fidarsene.
 //
 // ATTENZIONE HARDWARE: il motore di vibrazione NON va collegato direttamente
 // al pin D2. Serve un transistor NPN (es. BC547/2N2222) pilotato dal pin,
@@ -28,7 +25,9 @@
 //   z1 STATE_SEARCHING_SIGNAL - missione attiva, sensore non ancora agganciato.
 //   z2 STATE_NORMAL - lettura valida, parametri nella norma.
 //   z3 STATE_VERIFYING - condizione critica rilevata, in attesa di conferma
-//      (persistenza).
+//      (persistenza). Ci si arriva anche da z1: un parametro gia' agganciato
+//      e fuori soglia basta, senza aspettare l'altro (sotto i 30 bpm la
+//      libreria non calcola la SpO2).
 //   z4 STATE_ALARM - almeno una causa di allarme e' attiva (vedi sotto).
 //   z5 STATE_SILENCED - notifica sospesa dall'operatore, le cause restano
 //      tracciate in sottofondo.
@@ -69,9 +68,10 @@
 //   separatamente (biometricCauseActive, ppeCauseActive,
 //   restrictedAreaCauseActive):
 //     - biometricCauseActive: confermata localmente dopo la persistenza in z3
-//       (evento s4), si azzera quando i parametri rientrano secondo le
-//       soglie di uscita (evento s5). In questo caso, e SOLO in questo
-//       caso, l'orologio informa il CC (azione p).
+//       (evento s4), si azzera quando ogni parametro uscito dalle soglie di
+//       ingresso rientra, dal lato da cui era uscito, oltre la sua soglia di
+//       uscita (evento s5). In questo caso, e SOLO in questo caso,
+//       l'orologio informa il CC (azione p).
 //     - ppeCauseActive / restrictedAreaCauseActive: impostate a true alla
 //       ricezione di un messaggio {"tipo":"DPI_MANCANTE"} (evento w1) /
 //       {"tipo":"AREA_VIETATA"} dal CC, azzerate alla ricezione del
@@ -101,11 +101,17 @@
 // EVENTI s5 vs u (rientro dei parametri, due soglie distinte):
 //   u  - "uscita da verifica": prima della conferma dell'allarme (z3), se
 //        il parametro rientra sotto le STESSE soglie usate per rilevarne
-//        il superamento (s3), si torna subito a z2. Rientro "veloce".
+//        il superamento (s3), si torna subito a z2. Rientro "veloce". Se in
+//        z3 si era entrati con un solo parametro agganciato e l'altro non lo
+//        e' ancora, si torna invece a z1.
 //   s5 - "rientro/risoluzione": usato per uscire da z4/z5. Per la causa
 //        biometrica, richiede le soglie di uscita (piu' restrittive di
-//        quelle di attivazione - isteresi vera). Per le cause DPI e area
-//        vietata, equivale alla ricezione del messaggio di risoluzione dal CC.
+//        quelle di attivazione - isteresi vera) per ciascun parametro uscito
+//        dalle soglie di ingresso, dal lato da cui era uscito: un battito
+//        alto si spegne a BPM_MAX_OUT o meno, uno basso a BPM_MIN_OUT o piu'.
+//        Un parametro rimasto sempre dentro non tiene acceso l'allarme
+//        dell'altro. Per le cause DPI e area vietata, equivale alla
+//        ricezione del messaggio di risoluzione dal CC.
 //        z4/z5 -> z2 solo quando TUTTE le cause attive sono rientrate.
 //
 // PULSANTE (unico comando, il RESET della scheda non e' accessibile a
@@ -172,6 +178,7 @@ const unsigned long SENSOR_RETRY_INTERVAL_MS = 5000; // ogni quanto riprovare in
 unsigned long lastSensorRetryMs = 0; // un "segnaposto" che ricorda quando è stato fatto l'ultimo tentativo.
 // Controllo periodico del sensore gia' agganciato: un filo staccato a
 // orologio acceso non blocca la libreria, che continua a leggere valori a vuoto.
+// Lo stesso controllo sblocca la FIFO rimasta piena (recoverStalledFifo()).
 const unsigned long SENSOR_CHECK_INTERVAL_MS = 2000; // ogni quanto interrogare il sensore
 const int SENSOR_MAX_MISSED_CHECKS = 2; // controlli falliti di fila prima di darlo per perso
 unsigned long lastSensorCheckMs = 0;
@@ -238,9 +245,10 @@ unsigned long brokerWritableSinceMs = 0;        // ultima volta in cui si poteva
 
 // Allarme biometrico (azione p) in attesa di essere consegnato al drone: se
 // scatta a rete caduta parte appena il broker torna, invece di andare perso.
+// I valori viaggiano gia' formattati: null per un parametro non agganciato.
 bool biometricAlarmPending = false;
-int  pendingAlarmBpm  = 0;
-int  pendingAlarmSpo2 = 0;
+char pendingAlarmBpm[8]  = "null";
+char pendingAlarmSpo2[8] = "null";
 
 // ---------- Cause di allarme (z4) ----------
 // I tre "interruttori" indipendenti che, combinati, decidono se lo stato
@@ -267,7 +275,7 @@ const unsigned long SCROLL_STEP_MS        = 450;   // ogni quanto scorre di un c
 const unsigned long SCROLL_START_PAUSE_MS = 1500; // quanto resta fermo l'inizio del testo prima di scorrere
 
 // ---------- Ritmi della vibrazione ----------
-// Il ritmo segue la causa mostrata sull'LCD, cosi' l'operatore distingue al
+// Il ritmo segue la causa piu' grave attiva, cosi' l'operatore distingue al
 // polso di che allarme si tratta senza guardare: continua per il pericolo
 // medico, battiti ravvicinati per l'area vietata, un colpo ogni tanto per i
 // DPI, che sono un richiamo e non un'emergenza immediata.
@@ -288,6 +296,11 @@ int prevCauseMask = 0;  // quali cause erano attive al giro precedente
 int vibrationCause = CAUSE_NONE;
 unsigned long vibrationCauseSinceMs = 0;
 
+// Colpo di riscontro tattile (pulseVibration): quando e' partito e quanto
+// dura. Lo spegne updateVibration(), il loop non si ferma ad aspettarlo.
+unsigned long feedbackPulseStartMs = 0;
+unsigned long feedbackPulseMs      = 0;
+
 // ---------- Avvisi temporanei ----------
 // Per qualche secondo dopo il decollo o l'atterraggio del drone l'LCD lo dice
 // su entrambe le righe e il LED blu resta acceso fisso. Un allarme che arriva
@@ -305,7 +318,7 @@ const int BPM_MIN_IN  = 30;
 const int BPM_MAX_IN  = 120;
 const int SPO2_MIN_IN = 92;
 // soglie "di uscita" nell'allarme (più strette: isteresi, evita lo sfarfallio)
-const int BPM_MIN_OUT  = 55;
+const int BPM_MIN_OUT  = 40;
 const int BPM_MAX_OUT  = 115;
 const int SPO2_MIN_OUT = 94;
 
@@ -347,13 +360,35 @@ unsigned long maskedCriticalStartMs = 0;
 // ---------- Evento battito ----------
 bool          newBeat = false;  // scritta dalla callback qui sotto, durante pox.update()
 unsigned long lastBeatMs = 0;   // memorizza quando è arrivato l'ultimo battito reale
+// Distanza fra gli ultimi due battiti: il battito in bpm si ricava da qui
+// (sampleHr) e non da pox.getHeartRate(). La libreria media il periodo e,
+// dopo ogni pausa di 2 s, riparte da zero: per i primi battiti dopo che il
+// dito si appoggia da' valori molto piu' bassi del vero, e sotto i 30 bpm
+// (oltre 2 s fra due battiti) li gonfia di due terzi.
+unsigned long beatIntervalMs = 0;
+// La libreria ricalcola la SpO2 ogni CALCULATE_EVERY_N_BEATS battiti e
+// riparte da zero dopo una pausa di BEATDETECTOR_INVALID_READOUT_DELAY ms:
+// qui si tiene lo stesso conto, cosi' ogni calcolo entra nella catena una
+// volta sola (sampleSpo2). Letta a tempo fisso, sotto i 90 bpm circa la
+// stessa SpO2 entrerebbe piu' volte nella finestra della mediana, e un
+// solo calcolo sbagliato la occuperebbe a maggioranza.
+int  beatsSinceSpo2 = 0;
+bool newSpo2 = false;  // la libreria ha appena calcolato una SpO2 nuova
 
 // Questa funzione non la chiamiamo mai noi direttamente nel codice
-// — viene chiamata automaticamente dalla libreria del sensore ogni 
-// volta che rileva un battito vero
+// — viene chiamata automaticamente dalla libreria del sensore ogni
+// volta che rileva un battito vero, dopo aver aggiornato la SpO2
 void onBeatDetected() {
-  lastBeatMs = millis();
+  unsigned long nowMs = millis();
+  beatIntervalMs = nowMs - lastBeatMs;
+  lastBeatMs = nowMs;
   newBeat = true;
+
+  if (beatIntervalMs > BEATDETECTOR_INVALID_READOUT_DELAY) beatsSinceSpo2 = 0;
+  if (++beatsSinceSpo2 >= CALCULATE_EVERY_N_BEATS) {
+    beatsSinceSpo2 = 0;
+    newSpo2 = true;
+  }
 }
 
 // ---------- Parametri di filtraggio ----------
@@ -368,10 +403,24 @@ const float HR_EMA_ALPHA   = 0.35;
 const float SPO2_EMA_ALPHA = 0.30;
 const float HR_MAX_DEVIATION_RATIO = 0.25; // È la soglia massima di variazione percentuale che un nuovo battito può avere rispetto al valore già filtrato, per essere accettato come "vero".
 
-const int HR_MAX_REJECTIONS = 6; //se vengono scartati 6 battiti di fila, la catena si ri-aggancia da zero
-int consecutiveHrRejections = 0; // contatore
+// Battiti fisiologicamente plausibili. Il limite basso e' il battito piu'
+// lento che arriva prima che la lettura scada (HR_STALE_TIMEOUT_MS) e deve
+// restare sotto BPM_MIN_IN, altrimenti il battito basso non potrebbe mai
+// superare la soglia di allarme.
+const float HR_MIN_PLAUSIBLE = 60000.0 / HR_STALE_TIMEOUT_MS;  // 12 bpm
+const float HR_MAX_PLAUSIBLE = 220;
+
+// Dopo 6 battiti scartati di fila si decide (handleHrRejections): se sono
+// coerenti fra loro il battito e' cambiato davvero e la catena si riallinea
+// su di loro, altrimenti era rumore e si riaggancia da zero.
+const int HR_MAX_REJECTIONS = 6;
+float hrRejected[HR_MAX_REJECTIONS];  // i battiti scartati di fila, in ordine di arrivo
+int   hrRejectedCount = 0;
 
 const int SPO2_MAX_OUT_OF_RANGE = 2;//analogo a sopra
+// Primo aggancio della SpO2 anticipato: bastano due calcoli della libreria
+// che differiscono al massimo di tanti punti percentuali, invece di tre.
+const float SPO2_LOCK_TOLERANCE = 2;
 int consecutiveSpo2OutOfRange = 0;
 
 float hrBuffer[HR_MEDIAN_WINDOW];// array — è la finestra mobile che contiene gli ultimi 5 battiti grezzi, su cui calcoliamo la mediana.
@@ -383,7 +432,7 @@ int   spo2BufferIndex = 0, spo2BufferCount = 0;
 float hrFiltered   = 0; // I valori finali, dopo entrambi gli stadi 
 float spo2Filtered = 0; // di filtraggio
 bool  hrReady   = false; //diventano true solo quando la rispettiva 
-bool  spo2Ready = false; // catena si è "agganciata" (almeno 3 campioni validi consecutivi accumulati)
+bool  spo2Ready = false; // catena si è "agganciata" (battito: almeno 3 campioni validi; SpO2: 2 che concordano, o 3)
 
 // valori grezzi (prima di qualsiasi filtro, tenuti solo per il debug/telemetria)
 float hrRaw   = 0;
@@ -392,18 +441,25 @@ float spo2Raw = 0;
 int bpm  = 0; //I valori finali arrotondati a numero intero - quelli 
 int spo2 = 0; //che effettivamente vengono mostrati sull'LCD e confrontati con le soglie.
 bool readingValid = false; // true solo quando entrambe le catene (hrReady e spo2Ready) sono agganciate
-// Ultima lettura valida, mostrata dall'allarme biometrico anche quando il
-// segnale si perde per un momento
+// Ultimo valore agganciato di ciascun parametro, mostrato dall'allarme
+// biometrico anche quando il segnale si perde per un momento
 int lastValidBpm  = 0;
 int lastValidSpo2 = 0;
 
+// Cosa tiene acceso l'allarme biometrico: parametro e lato da cui e' uscito.
+// Ciascuno si spegne quando quel parametro rientra da quel lato oltre la sua
+// soglia di uscita: un parametro rimasto sempre nelle soglie di ingresso non
+// tiene acceso l'allarme dell'altro, e un battito alto che scende sotto
+// BPM_MIN_OUT, ma resta sopra BPM_MIN_IN, non diventa un allarme di battito basso.
+bool hrHighAlarmActive  = false;
+bool hrLowAlarmActive   = false;
+bool spo2LowAlarmActive = false;
+
 // ---------- Timer ----------
 // Ogni quanto (in millisecondi) eseguire ciascun compito periodico
-const unsigned long SPO2_SAMPLE_INTERVAL_MS    = 1000;
 const unsigned long DISPLAY_UPDATE_INTERVAL_MS = 250;
 const unsigned long FSM_UPDATE_INTERVAL_MS     = 250;
-// Per ciascuno dei tre, memorizza quando è stato eseguito l'ultima volta
-unsigned long lastSpo2SampleMs    = 0;
+// Per ciascuno dei due, memorizza quando è stato eseguito l'ultima volta
 unsigned long lastDisplayUpdateMs = 0;
 unsigned long lastFsmUpdateMs     = 0;
 
@@ -458,13 +514,22 @@ void formatValue(char* dest, size_t size, bool present, float value) {
   }
 }
 
+// Come formatValue(), per i valori interi (bpm e spo2 arrotondati).
+void formatInteger(char* dest, size_t size, bool present, int value) {
+  if (present) {
+    snprintf(dest, size, "%d", value);
+  } else {
+    snprintf(dest, size, "null");
+  }
+}
+
 // Costruisce un messaggio JSON con i valori correnti (bpm, spo2, stato) e
 // lo invia al CC sul topic di telemetria (TELEMETRY_TOPIC). Chiamata
 // periodicamente dal loop(), non solo quando c'è un allarme: è la
 // "telemetria continua" che permette al CC di sapere come sta l'operatore
-// in ogni momento. Se la lettura non è ancora valida, bpm/spo2 vengono
-// inviati come "null" invece di 0, per non far credere al CC che i valori
-// siano davvero zero.
+// in ogni momento. Un parametro la cui catena non e' ancora agganciata viene
+// inviato come "null" invece di 0, per non far credere al CC che il valore
+// sia davvero zero; lettura_valida e' true solo con entrambi agganciati.
 // Porta anche i valori grezzi e filtrati con un decimale (hr_grezzo,
 // hr_filtrato, spo2_grezzo, spo2_filtrato): il CC li registra e a fine
 // sessione ne disegna i grafici di confronto. Un valore che non c'e' (catena
@@ -472,10 +537,10 @@ void formatValue(char* dest, size_t size, bool present, float value) {
 void publishTelemetry() {
   char hrRawText[12], hrFilteredText[12], spo2RawText[12], spo2FilteredText[12];
   bool recentBeat = (millis() - lastBeatMs <= HR_STALE_TIMEOUT_MS);
-  formatValue(hrRawText,        sizeof(hrRawText),        hrRaw > 0 && recentBeat, hrRaw);
-  formatValue(hrFilteredText,   sizeof(hrFilteredText),   hrReady,                 hrFiltered);
-  formatValue(spo2RawText,      sizeof(spo2RawText),      spo2Raw > 0,             spo2Raw);
-  formatValue(spo2FilteredText, sizeof(spo2FilteredText), spo2Ready,               spo2Filtered);
+  formatValue(hrRawText,        sizeof(hrRawText),        hrRaw > 0 && recentBeat,   hrRaw);
+  formatValue(hrFilteredText,   sizeof(hrFilteredText),   hrReady,                   hrFiltered);
+  formatValue(spo2RawText,      sizeof(spo2RawText),      spo2Raw > 0 && recentBeat, spo2Raw);
+  formatValue(spo2FilteredText, sizeof(spo2FilteredText), spo2Ready,                 spo2Filtered);
 
   char rawFilteredFields[112];
   snprintf(rawFilteredFields, sizeof(rawFilteredFields),
@@ -484,16 +549,14 @@ void publishTelemetry() {
 
   // Il messaggio piu' lungo sta sotto i 200 caratteri: insieme al topic resta
   // entro il buffer di PubSubClient (setBufferSize in setup()).
+  char bpmText[8], spo2Text[8];
+  formatInteger(bpmText,  sizeof(bpmText),  hrReady,   bpm);
+  formatInteger(spo2Text, sizeof(spo2Text), spo2Ready, spo2);
+
   char payload[224];  // buffer di testo dove costruiamo il JSON prima di inviarlo
-  if (readingValid) {
-    snprintf(payload, sizeof(payload),  // compone la stringa in modo sicuro, senza sforare la dimensione del buffer
-             "{\"bpm\":%d,\"spo2\":%d,\"stato\":\"%s\",\"lettura_valida\":true,%s}",
-             bpm, spo2, getStateName(), rawFilteredFields);
-  } else {
-    snprintf(payload, sizeof(payload),
-             "{\"bpm\":null,\"spo2\":null,\"stato\":\"%s\",\"lettura_valida\":false,%s}",
-             getStateName(), rawFilteredFields);
-  }
+  snprintf(payload, sizeof(payload),  // compone la stringa in modo sicuro, senza sforare la dimensione del buffer
+           "{\"bpm\":%s,\"spo2\":%s,\"stato\":\"%s\",\"lettura_valida\":%s,%s}",
+           bpmText, spo2Text, getStateName(), readingValid ? "true" : "false", rawFilteredFields);
   mqtt.publish(TELEMETRY_TOPIC, payload);  // invio effettivo del messaggio sul topic
 }
 
@@ -508,14 +571,13 @@ void publishTelemetry() {
 // Qui l'allarme viene solo registrato: lo invia sendPendingBiometricAlarm()
 // appena il broker puo' riceverlo, cosi' a rete caduta non va perso.
 void publishBiometricAlarm() {
-  pendingAlarmBpm  = bpm;
-  pendingAlarmSpo2 = spo2;
+  formatInteger(pendingAlarmBpm,  sizeof(pendingAlarmBpm),  hrReady,   bpm);
+  formatInteger(pendingAlarmSpo2, sizeof(pendingAlarmSpo2), spo2Ready, spo2);
   biometricAlarmPending = true;
   Serial.print("[ALLARME] valori fuori soglia, BPM ");
-  Serial.print(bpm);
+  Serial.print(vitalText(hrReady, bpm));
   Serial.print(" e SpO2 ");
-  Serial.print(spo2);
-  Serial.println("%");
+  Serial.println(spo2Ready ? String(spo2) + "%" : String("--"));
 }
 
 // Consegna al drone l'allarme biometrico in attesa, se c'e'. Chiamata dal
@@ -524,7 +586,7 @@ void sendPendingBiometricAlarm() {
   if (!biometricAlarmPending) return;
   char payload[160];
   snprintf(payload, sizeof(payload),
-           "{\"bpm\":%d,\"spo2\":%d,\"evento\":\"BIOMETRIA_ANOMALA\"}",
+           "{\"bpm\":%s,\"spo2\":%s,\"evento\":\"BIOMETRIA_ANOMALA\"}",
            pendingAlarmBpm, pendingAlarmSpo2);
   if (mqtt.publish(TELEMETRY_TOPIC, payload)) {
     biometricAlarmPending = false;
@@ -610,6 +672,9 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     missionActive = false;
     prefs.putBool("missione", false);
     biometricCauseActive = false;  // fine missione: azzera tutte le cause di allarme pendenti
+    hrHighAlarmActive = false;
+    hrLowAlarmActive = false;
+    spo2LowAlarmActive = false;
     ppeCauseActive = false;
     missingPpeList = "";
     restrictedAreaCauseActive = false;
@@ -858,7 +923,7 @@ void setup() {
   // Inizializza tutti i "cronometri" al tempo corrente, così i primi
   // controlli nel loop() non scattano immediatamente per un falso timeout.
   unsigned long nowMs = millis();
-  lastSpo2SampleMs = lastDisplayUpdateMs = lastFsmUpdateMs = nowMs;
+  lastDisplayUpdateMs = lastFsmUpdateMs = nowMs;
   lastBeatMs = nowMs;
   lastSensorRetryMs = lastSensorCheckMs = nowMs;
 }
@@ -884,26 +949,34 @@ void loop() {
   if (sensorPresent) {
     if (newBeat) {
       newBeat = false;
+      if (beatIntervalMs > BEATDETECTOR_INVALID_READOUT_DELAY) {
+        // Dopo una pausa cosi' la libreria ha azzerato la SpO2: quella in
+        // catena e' vecchia, e la prossima arriva fra CALCULATE_EVERY_N_BEATS battiti
+        spo2Raw = 0;
+        resetSpo2();
+      }
       sampleHr();  // elabora il nuovo battito solo quando ce n'è uno vero
     }
 
-    if (hrReady && (nowMs - lastBeatMs > HR_STALE_TIMEOUT_MS)) {
-      resetHr();  // troppo silenzio dal sensore: la lettura HR non è più affidabile
+    if (newSpo2) {
+      newSpo2 = false;
+      sampleSpo2();  // una volta per ogni SpO2 calcolata dalla libreria
     }
 
-    if (nowMs - lastSpo2SampleMs >= SPO2_SAMPLE_INTERVAL_MS) {  // SpO2 campionata a tempo fisso, non ad evento
-      lastSpo2SampleMs = nowMs;
-      sampleSpo2();
+    // Troppo silenzio dal sensore: le letture non sono più affidabili. Si
+    // azzera anche un aggancio rimasto a meta', che altrimenti si
+    // mescolerebbe con i battiti del dito appoggiato la volta dopo.
+    if (nowMs - lastBeatMs > HR_STALE_TIMEOUT_MS) {
+      resetHr();
+      resetSpo2();
     }
   }
 
   if (nowMs - lastFsmUpdateMs >= FSM_UPDATE_INTERVAL_MS) {
     lastFsmUpdateMs = nowMs;
     readingValid = hrReady && spo2Ready;  // valida solo se ENTRAMBE le catene sono agganciate
-    if (readingValid) {
-      lastValidBpm  = bpm;
-      lastValidSpo2 = spo2;
-    }
+    if (hrReady)   lastValidBpm  = bpm;
+    if (spo2Ready) lastValidSpo2 = spo2;
     updateFsm();              // fa avanzare la macchina a stati
     if (SERIAL_PLOTTER) printPlotterTelemetry();  // una riga di valori per il Plotter seriale
   }
@@ -950,20 +1023,54 @@ void loop() {
 
 // ================== CONTROLLO SENSORE ==================
 
+// Legge un registro del sensore direttamente sul bus I2C. false se il
+// sensore non risponde.
+bool readSensorRegister(uint8_t reg, uint8_t& value) {
+  Wire.beginTransmission(MAX30100_I2C_ADDRESS);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(MAX30100_I2C_ADDRESS, 1) != 1) return false;
+  value = Wire.read();
+  return true;
+}
+
+void writeSensorRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(MAX30100_I2C_ADDRESS);
+  Wire.write(reg);
+  Wire.write(value);
+  Wire.endTransmission();
+}
+
 // true se il sensore risponde ed e' ancora nella modalita' impostata da
 // pox.begin(). Uno staccato e riattaccato fra due controlli risponde, ma si e'
 // riacceso con la configurazione azzerata e non misura piu' nulla.
 bool isSensorResponding() {
-  Wire.beginTransmission(MAX30100_I2C_ADDRESS);
-  Wire.write(MAX30100_REG_MODE_CONFIGURATION);
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom(MAX30100_I2C_ADDRESS, 1) != 1) return false;
-  return (Wire.read() & 0x07) == MAX30100_MODE_SPO2_HR;
+  uint8_t mode;
+  if (!readSensorRegister(MAX30100_REG_MODE_CONFIGURATION, mode)) return false;
+  return (mode & 0x07) == MAX30100_MODE_SPO2_HR;
 }
 
-// Interroga il sensore agganciato ogni SENSOR_CHECK_INTERVAL_MS. Dopo
-// SENSOR_MAX_MISSED_CHECKS risposte mancate lo da' per perso: azzera le
-// letture e lascia a retrySensorIfMissing() il riaggancio.
+// La FIFO del sensore tiene 16 campioni, 160 ms a 100 Hz. Se pox.update()
+// non gira per piu' di cosi' si riempie e i suoi due puntatori coincidono:
+// la libreria la scambia per vuota, non legge piu' nulla e i battiti non
+// arrivano piu', nemmeno dopo un riavvio dell'orologio, che non spegne il
+// sensore. Da piena perde i campioni nuovi e li conta nel registro di
+// overflow: se il contatore non e' a zero, si azzerano i puntatori e la
+// lettura riparte.
+void recoverStalledFifo() {
+  uint8_t lostSamples;
+  if (!readSensorRegister(MAX30100_REG_FIFO_OVERFLOW_COUNTER, lostSamples)) return;
+  if (lostSamples == 0) return;
+  writeSensorRegister(MAX30100_REG_FIFO_WRITE_POINTER, 0);
+  writeSensorRegister(MAX30100_REG_FIFO_OVERFLOW_COUNTER, 0);
+  writeSensorRegister(MAX30100_REG_FIFO_READ_POINTER, 0);
+  Serial.println("[SENSORE] FIFO piena dopo una pausa del loop, lettura ripristinata");
+}
+
+// Interroga il sensore agganciato ogni SENSOR_CHECK_INTERVAL_MS. Se risponde
+// ne sblocca la FIFO, se serve; dopo SENSOR_MAX_MISSED_CHECKS risposte
+// mancate lo da' per perso: azzera le letture e lascia a
+// retrySensorIfMissing() il riaggancio.
 void checkSensorConnection() {
   if (!sensorPresent) return;
 
@@ -973,6 +1080,7 @@ void checkSensorConnection() {
 
   if (isSensorResponding()) {
     missedSensorChecks = 0;
+    recoverStalledFifo();
     return;
   }
   missedSensorChecks++;
@@ -980,6 +1088,7 @@ void checkSensorConnection() {
 
   missedSensorChecks = 0;
   sensorPresent = false;
+  newBeat = newSpo2 = false;  // un battito di prima della perdita non va elaborato al ritorno
   resetHr();
   resetSpo2();
   readingValid = false;
@@ -1024,48 +1133,77 @@ void retrySensorIfMissing() {
 // ================== CATENA HR (a eventi) ==================
 
 // Azzera completamente lo stato della catena di filtraggio del battito:
-// richiamata sia dopo un timeout prolungato di silenzio dal sensore, sia
-// internamente da sampleHr() quando serve un nuovo aggancio da zero.
+// richiamata dopo un timeout prolungato di silenzio dal sensore, quando il
+// sensore non risponde piu' (checkSensorConnection) e da handleHrRejections()
+// quando serve un nuovo aggancio da zero.
 void resetHr() {
   hrReady = false;
   hrBufferCount = 0;
   hrBufferIndex = 0;
   hrFiltered = 0;
   bpm = 0;
-  consecutiveHrRejections = 0;
+  hrRejectedCount = 0;
 }
 
 // Chiamata UNA VOLTA PER OGNI BATTITO REALE rilevato (non a intervalli
-// fissi): legge il valore grezzo, lo filtra in due stadi (mediana, poi
-// media mobile esponenziale) e aggiorna bpm.
+// fissi): ricava il battito grezzo dalla distanza dal battito precedente,
+// lo filtra in due stadi (mediana, poi media mobile esponenziale) e
+// aggiorna bpm.
 void sampleHr() {
-  hrRaw = pox.getHeartRate();
+  hrRaw = 60000.0 / beatIntervalMs;
 
-  if (hrRaw < 30 || hrRaw > 220) return;  // gate di plausibilità fisiologica: fuori da qui, scarta subito
+  // Gate di plausibilità fisiologica: fuori da qui, scarta subito. Il primo
+  // battito dopo una pausa lunga cade qui sotto, perche' misura la pausa.
+  if (hrRaw < HR_MIN_PLAUSIBLE || hrRaw > HR_MAX_PLAUSIBLE) return;
 
-  if (hrReady) {
-    // Controllo di qualità: un salto troppo grande rispetto al valore già
-    // agganciato è quasi certamente un artefatto da movimento, non un vero
-    // cambiamento fisiologico (vedi spiegazione dettagliata data a parte).
-    float deviation = fabs(hrRaw - hrFiltered) / hrFiltered;
-    if (deviation > HR_MAX_DEVIATION_RATIO) {
-      consecutiveHrRejections++;
-      if (consecutiveHrRejections >= HR_MAX_REJECTIONS) {
-        // Troppi scarti di fila: il valore agganciato è probabilmente
-        // sbagliato (es. rumore all'inizio) - meglio ripartire da zero
-        // piuttosto che restare bloccati per sempre su un valore sbagliato.
-        Serial.println("[SENSORE] battito instabile, riaggancio la lettura");
-        resetHr();
-      } else {
-        return;  // battito scartato, ma la catena resta agganciata per ora
-      }
-    } else {
-      consecutiveHrRejections = 0;  // battito accettato: azzera il contatore degli scarti
-    }
+  // Controllo di qualità: un salto troppo grande rispetto al valore già
+  // agganciato è quasi sempre un artefatto (movimento, battito perso o
+  // contato due volte), non un vero cambiamento fisiologico.
+  if (hrReady && fabs(hrRaw - hrFiltered) / hrFiltered > HR_MAX_DEVIATION_RATIO) {
+    hrRejected[hrRejectedCount++] = hrRaw;
+    if (hrRejectedCount >= HR_MAX_REJECTIONS) handleHrRejections();
+    return;  // battito scartato, ma la catena resta agganciata per ora
   }
+  hrRejectedCount = 0;  // battito accettato: azzera gli scarti
+  pushHrSample(hrRaw);
+}
 
+// Decide dopo HR_MAX_REJECTIONS battiti scartati di fila. Se sono coerenti
+// fra loro (ciascuno entro HR_MAX_DEVIATION_RATIO dalla loro mediana) il
+// battito e' cambiato davvero, di colpo: la catena riparte dagli ultimi
+// scartati e resta agganciata, senza far ricomparire "Appoggia il dito".
+// Se non lo sono era rumore: meglio ripartire da zero piuttosto che restare
+// bloccati per sempre su un valore sbagliato.
+void handleHrRejections() {
+  float rejectedMedian = computeMedian(hrRejected, HR_MAX_REJECTIONS);
+  bool consistent = areHrSamplesConsistent(hrRejected, HR_MAX_REJECTIONS, rejectedMedian);
+
+  resetHr();
+  if (!consistent) {
+    Serial.println("[SENSORE] battito instabile, riaggancio la lettura");
+    return;
+  }
+  // Gli ultimi scartati riempiono la finestra della mediana: da tre in su
+  // la catena e' di nuovo agganciata
+  int first = HR_MAX_REJECTIONS > HR_MEDIAN_WINDOW ? HR_MAX_REJECTIONS - HR_MEDIAN_WINDOW : 0;
+  for (int i = first; i < HR_MAX_REJECTIONS; i++) pushHrSample(hrRejected[i]);
+  Serial.print("[SENSORE] battito cambiato di colpo, lettura riallineata a ");
+  Serial.print(bpm);
+  Serial.println(" bpm");
+}
+
+// true se ciascuno dei battiti e' entro HR_MAX_DEVIATION_RATIO dalla loro mediana.
+bool areHrSamplesConsistent(const float* samples, int count, float median) {
+  for (int i = 0; i < count; i++) {
+    if (fabs(samples[i] - median) / median > HR_MAX_DEVIATION_RATIO) return false;
+  }
+  return true;
+}
+
+// Inserisce un battito grezzo accettato nella catena e aggiorna bpm.
+void pushHrSample(float value) {
   // Stadio 1: inserisce il campione nel buffer circolare e calcola la mediana
-  hrBuffer[hrBufferIndex] = hrRaw;
+  hrBuffer[hrBufferIndex] = value;
   hrBufferIndex = (hrBufferIndex + 1) % HR_MEDIAN_WINDOW;  // torna a 0 dopo l'ultima casella
   if (hrBufferCount < HR_MEDIAN_WINDOW) hrBufferCount++;
 
@@ -1075,11 +1213,17 @@ void sampleHr() {
   // Finche' il buffer non e' pieno i campioni stanno in ordine dall'inizio:
   // si prendono gli ultimi medianCount, i piu' recenti. A buffer pieno
   // medianCount e' l'intera finestra e lo scostamento vale zero.
-  float hrMedian = computeMedian(hrBuffer + (hrBufferCount - medianCount), medianCount);
+  float* medianWindow = hrBuffer + (hrBufferCount - medianCount);
+  float hrMedian = computeMedian(medianWindow, medianCount);
 
   // Stadio 2: media mobile esponenziale sopra il valore mediano
   if (!hrReady) {
-    hrFiltered = hrMedian;  // primo aggancio: nessuno smussamento, si parte diretti dal valore
+    // Primo aggancio: con la finestra non ancora piena solo se i campioni
+    // concordano. Un battito contato due volte spezza un intervallo in due
+    // brevi e simili: su tre campioni la mediana cadrebbe su di loro, su
+    // cinque no.
+    if (hrBufferCount < HR_MEDIAN_WINDOW && !areHrSamplesConsistent(medianWindow, medianCount, hrMedian)) return;
+    hrFiltered = hrMedian;  // nessuno smussamento, si parte diretti dal valore
     hrReady = true;
   } else {
     hrFiltered = HR_EMA_ALPHA * hrMedian + (1.0 - HR_EMA_ALPHA) * hrFiltered;
@@ -1088,7 +1232,7 @@ void sampleHr() {
   bpm = (int)(hrFiltered + 0.5);  // arrotonda al numero intero più vicino
 }
 
-// ================== CATENA SpO2 (temporizzata, 1 Hz) ==================
+// ================== CATENA SpO2 (a eventi, ogni calcolo della libreria) ==================
 
 // Analoga a resetHr(), ma per la catena della saturazione di ossigeno.
 void resetSpo2() {
@@ -1100,18 +1244,11 @@ void resetSpo2() {
   consecutiveSpo2OutOfRange = 0;
 }
 
-// A differenza di sampleHr() (guidata da evento), questa viene chiamata
-// a intervalli fissi di 1 secondo dal loop(), perché la SpO2 varia molto
-// più lentamente del battito.
+// Chiamata una volta per ogni SpO2 calcolata dalla libreria (ogni
+// CALCULATE_EVERY_N_BEATS battiti, vedi onBeatDetected()): ogni calcolo
+// occupa un solo posto nella finestra della mediana, a qualunque battito.
 void sampleSpo2() {
   spo2Raw = pox.getSpO2();
-
-  // Senza battiti la libreria puo' conservare l'ultima SpO2 calcolata: non e'
-  // una misura, e la catena riparte quando i battiti tornano.
-  if (millis() - lastBeatMs > HR_STALE_TIMEOUT_MS) {
-    resetSpo2();
-    return;
-  }
 
   if (spo2Raw < 70 || spo2Raw > 100) {
     // Fuori range plausibile: tollera qualche lettura anomala consecutiva
@@ -1129,10 +1266,18 @@ void sampleSpo2() {
   spo2BufferIndex = (spo2BufferIndex + 1) % SPO2_MEDIAN_WINDOW;
   if (spo2BufferCount < SPO2_MEDIAN_WINDOW) spo2BufferCount++;
 
-  if (spo2BufferCount < 3) return;
+  if (spo2BufferCount < 2) return;
 
-  int medianCount = (spo2BufferCount % 2 == 0) ? spo2BufferCount - 1 : spo2BufferCount;
-  float spo2Median = computeMedian(spo2Buffer + (spo2BufferCount - medianCount), medianCount);  // ultimi campioni, come per il battito
+  float spo2Median;
+  if (spo2BufferCount == 2) {
+    // Primo aggancio con due soli calcoli, solo se concordano (vale la loro
+    // media). Se no si aspetta il terzo, e la mediana scarta quello sbagliato.
+    if (fabs(spo2Buffer[0] - spo2Buffer[1]) > SPO2_LOCK_TOLERANCE) return;
+    spo2Median = (spo2Buffer[0] + spo2Buffer[1]) / 2;
+  } else {
+    int medianCount = (spo2BufferCount % 2 == 0) ? spo2BufferCount - 1 : spo2BufferCount;
+    spo2Median = computeMedian(spo2Buffer + (spo2BufferCount - medianCount), medianCount);  // ultimi campioni, come per il battito
+  }
 
   if (!spo2Ready) {
     spo2Filtered = spo2Median;
@@ -1148,7 +1293,7 @@ void sampleSpo2() {
 // temporaneo, li ordina (insertion sort, adatto ad array così piccoli), e
 // ritorna l'elemento centrale.
 float computeMedian(float* buf, int n) {
-  float tmp[8];  // capiente abbastanza per entrambe le finestre usate nel programma (5 elementi ciascuna)
+  float tmp[8];  // capiente abbastanza per le due finestre (5 elementi ciascuna) e per i battiti scartati (6)
   for (int i = 0; i < n; i++) tmp[i] = buf[i];
   for (int i = 1; i < n; i++) {
     float key = tmp[i];
@@ -1164,16 +1309,38 @@ float computeMedian(float* buf, int n) {
 
 // ================== MACCHINA A STATI ==================
 
-// true se almeno uno dei due parametri è fuori dalle soglie "di ingresso"
-// (le meno strette) - fa scattare il passaggio da STATE_NORMAL a STATE_VERIFYING.
+// Ogni parametro si valuta solo se la sua catena e' agganciata, senza
+// aspettare l'altra: sotto i 30 bpm la libreria non calcola la SpO2, e il
+// battito basso non potrebbe mai far scattare l'allarme.
+
+// true se il parametro è oltre la soglia "di ingresso" (le meno strette) da
+// quel lato
+bool isHrAboveEntry()   { return hrReady && bpm > BPM_MAX_IN; }
+bool isHrBelowEntry()   { return hrReady && bpm < BPM_MIN_IN; }
+bool isSpo2BelowEntry() { return spo2Ready && spo2 < SPO2_MIN_IN; }
+
+// true se almeno un parametro è fuori dalle soglie "di ingresso" - fa
+// scattare il passaggio a STATE_VERIFYING.
 bool isOutsideEntryThresholds() {
-  return (bpm < BPM_MIN_IN || bpm > BPM_MAX_IN || spo2 < SPO2_MIN_IN);
+  return isHrAboveEntry() || isHrBelowEntry() || isSpo2BelowEntry();
 }
 
-// true solo se ENTRAMBI i parametri sono dentro le soglie "di uscita" (le
-// più strette) - usata per uscire dall'allarme biometrico con isteresi vera.
-bool isWithinExitThresholds() {
-  return (bpm >= BPM_MIN_OUT && bpm <= BPM_MAX_OUT && spo2 >= SPO2_MIN_OUT);
+// true se il parametro è rientrato, dal lato da cui era uscito, oltre la
+// soglia "di uscita" (le più strette) - usate per spegnere l'allarme
+// biometrico con isteresi vera.
+bool isHrBackFromHigh()  { return hrReady && bpm <= BPM_MAX_OUT; }
+bool isHrBackFromLow()   { return hrReady && bpm >= BPM_MIN_OUT; }
+bool isSpo2BackFromLow() { return spo2Ready && spo2 >= SPO2_MIN_OUT; }
+
+// Evento s4: conferma l'allarme biometrico per i parametri fuori soglia in
+// questo momento e lo comunica al CC (azione p).
+void confirmBiometricAlarm() {
+  biometricCauseActive = true;
+  hrHighAlarmActive  = isHrAboveEntry();
+  hrLowAlarmActive   = isHrBelowEntry();
+  spo2LowAlarmActive = isSpo2BelowEntry();
+  currentState = STATE_ALARM;
+  publishBiometricAlarm();
 }
 
 // La funzione più importante del programma: fa avanzare l'automa di uno
@@ -1184,9 +1351,18 @@ void updateFsm() {
   // test), in z6 finche' il sensore non risponde (retrySensorIfMissing)
   if (!missionActive) return;
 
-  // Rientro della causa biometrica (isteresi, soglie di uscita)
-  if (biometricCauseActive && isWithinExitThresholds()) {
-    biometricCauseActive = false;
+  // Rientro della causa biometrica (isteresi, soglie di uscita), parametro
+  // per parametro e lato per lato: un parametro che esce dalle soglie di
+  // ingresso ad allarme gia' acceso si aggiunge a quelli da far rientrare, e
+  // la causa si spegne quando sono rientrati tutti.
+  if (biometricCauseActive) {
+    if (isHrAboveEntry())   hrHighAlarmActive = true;
+    if (isHrBelowEntry())   hrLowAlarmActive = true;
+    if (isSpo2BelowEntry()) spo2LowAlarmActive = true;
+    if (hrHighAlarmActive && isHrBackFromHigh())   hrHighAlarmActive = false;
+    if (hrLowAlarmActive && isHrBackFromLow())     hrLowAlarmActive = false;
+    if (spo2LowAlarmActive && isSpo2BackFromLow()) spo2LowAlarmActive = false;
+    biometricCauseActive = hrHighAlarmActive || hrLowAlarmActive || spo2LowAlarmActive;
   }
 
   // Sorveglianza biometrica mentre l'automa e' gia' in z4/z5 per un'altra
@@ -1196,15 +1372,13 @@ void updateFsm() {
   // z4/z5); i due controlli non si sovrappongono perche' valgono in stati
   // diversi.
   if ((currentState == STATE_ALARM || currentState == STATE_SILENCED)
-      && !biometricCauseActive && readingValid && isOutsideEntryThresholds()) {
+      && !biometricCauseActive && isOutsideEntryThresholds()) {
     if (!maskedCriticalPending) {
       maskedCriticalPending = true;
       maskedCriticalStartMs = millis();
     } else if (millis() - maskedCriticalStartMs >= PERSISTENCE_MS) {
       maskedCriticalPending = false;
-      biometricCauseActive = true;
-      currentState = STATE_ALARM;  // una causa nuova scavalca il silenziamento
-      publishBiometricAlarm();     // azione p verso il CC
+      confirmBiometricAlarm();  // una causa nuova scavalca il silenziamento
     }
   } else {
     maskedCriticalPending = false;
@@ -1223,7 +1397,9 @@ void updateFsm() {
     }
     if (!sensorPresent) {
       currentState = STATE_FAULT;
-    } else if (!readingValid) {
+    } else if (!readingValid && !isOutsideEntryThresholds()) {
+      // Lettura incompleta: si torna a cercare il segnale, a meno che il
+      // parametro gia' agganciato sia fuori soglia (va verificato comunque)
       currentState = STATE_SEARCHING_SIGNAL;
     }
   }
@@ -1233,7 +1409,12 @@ void updateFsm() {
   switch (currentState) {
 
     case STATE_SEARCHING_SIGNAL:
-      if (readingValid) currentState = STATE_NORMAL;  // evento s1
+      if (isOutsideEntryThresholds()) {
+        currentState = STATE_VERIFYING;               // evento s3, col solo parametro agganciato
+        verifyStartMs = millis();
+      } else if (readingValid) {
+        currentState = STATE_NORMAL;                  // evento s1
+      }
       break;
 
     case STATE_NORMAL:
@@ -1247,9 +1428,7 @@ void updateFsm() {
       if (!isOutsideEntryThresholds()) {
         currentState = STATE_NORMAL;                  // evento u: rientro veloce
       } else if (millis() - verifyStartMs >= PERSISTENCE_MS) {
-        biometricCauseActive = true;
-        currentState = STATE_ALARM;                   // evento s4 (+ azione p)
-        publishBiometricAlarm();
+        confirmBiometricAlarm();                      // evento s4 (+ azione p)
       }
       break;
 
@@ -1410,13 +1589,14 @@ void toggleSensorTest() {
 }
 
 // Fa vibrare il motore per un tempo breve e fisso: usata come riscontro
-// tattile (es. prima pressione lunga accettata) e nella sequenza di reset.
-// È bloccante (usa delay()): durante la sua esecuzione il loop() è fermo,
-// accettabile solo perché le durate in gioco sono brevi (150-400ms).
-void pulseVibration(int durationMs) {
+// tattile (es. prima pressione lunga accettata, avvio e fine missione).
+// Non blocca: accende il motore e lascia a updateVibration() lo spegnimento.
+// Un delay() anche di soli 150 ms riempie la FIFO del sensore (vedi
+// recoverStalledFifo()).
+void pulseVibration(unsigned long durationMs) {
+  feedbackPulseStartMs = millis();
+  feedbackPulseMs = durationMs;
   digitalWrite(PIN_VIBRATION, HIGH);
-  delay(durationMs);
-  digitalWrite(PIN_VIBRATION, LOW);
 }
 
 // Evento r: riavvio software. La missione (se attiva) e' gia' stata
@@ -1431,7 +1611,10 @@ void restartDevice() {
   digitalWrite(PIN_LED_RED, HIGH);
   digitalWrite(PIN_LED_GREEN, LOW);
   digitalWrite(PIN_LED_BLUE, LOW);
-  pulseVibration(400);
+  // Qui il motore si comanda a mano e la pausa non conta: il chip riparte subito
+  digitalWrite(PIN_VIBRATION, HIGH);
+  delay(400);
+  digitalWrite(PIN_VIBRATION, LOW);
 
   ESP.restart();  // riavvio vero e proprio del chip: da qui setup() ripartirà da capo
 }
@@ -1525,8 +1708,8 @@ const char* buildNetworkStatusText() {
 // Aggiorna il testo mostrato sull'LCD in base allo stato corrente e alle
 // eventuali cause di allarme attive. Chiamata ogni 250ms dal loop().
 // Ogni schermata riempie entrambe le righe, cosi' non restano mai insieme
-// meta' di un testo e meta' di un altro; solo il riscontro del pulsante
-// prende il posto della seconda riga.
+// meta' di un testo e meta' di un altro; anche la sequenza di riavvio dal
+// pulsante prende il posto di entrambe.
 void updateLcd() {
   // Con piu' cause attive insieme si mostra una causa alla volta, a turno:
   // entrambe le righe si riferiscono sempre alla stessa, quindi la causa si
@@ -1591,11 +1774,15 @@ void updateLcd() {
 
   unsigned long heldMs = buttonPressed ? (millis() - pressStartMs) : 0;
 
+  // Sequenza di riavvio (due pressioni lunghe): occupa entrambe le righe,
+  // sopra resterebbe la schermata di prima, che non c'entra.
   if (buttonPressed && heldMs >= 400 && !longPressCounted) {
     // Countdown alla pressione lunga: rilasciando prima si annulla tutto
     int remainingSec = (LONG_PRESS_MS - heldMs + 999) / 1000;
+    line1 = "Reset orologio";
     line2 = String("Tieni premuto:") + remainingSec + "s";
   } else if (pendingResetPresses == 1) {
+    line1 = "Reset orologio";
     line2 = "Ripeti per reset";
   }
 
@@ -1622,47 +1809,42 @@ int countMissingPpe() {
   return count;
 }
 
-// Righe dell'allarme biometrico: dicono QUALE parametro e' fuori soglia,
-// sopra, e il suo valore, sotto. Se sono fuori entrambi non c'e' spazio per
-// le parole e si mostrano i due valori, uno per riga.
-// Usano l'ultima lettura valida: durante l'allarme lo stato del segnale non
-// si mostra, e una perdita breve non fa alternare la schermata.
+// Righe dell'allarme biometrico: dicono QUALE parametro tiene acceso
+// l'allarme (hrHighAlarmActive, hrLowAlarmActive, spo2LowAlarmActive),
+// sopra, e il suo valore, sotto. Se sono entrambi non c'e' spazio per le
+// parole e si mostrano i due valori, uno per riga.
+// Usano l'ultimo valore agganciato: durante l'allarme lo stato del segnale
+// non si mostra, e una perdita breve non fa alternare la schermata.
 void buildBiometricLines(String& line1, String& line2) {
   int bpm  = lastValidBpm;
   int spo2 = lastValidSpo2;
+  bool hrAlarm = hrHighAlarmActive || hrLowAlarmActive;
 
-  bool hrHigh  = bpm > BPM_MAX_IN;
-  bool hrLow   = bpm < BPM_MIN_IN;
-  bool spo2Low = spo2 < SPO2_MIN_IN;
-  if (!hrHigh && !hrLow && !spo2Low) {
-    // Zona di isteresi: i valori sono rientrati nelle soglie di ingresso ma
-    // non ancora in quelle di uscita; si nomina il parametro che tiene
-    // acceso l'allarme.
-    hrHigh  = bpm > BPM_MAX_OUT;
-    hrLow   = bpm < BPM_MIN_OUT;
-    spo2Low = spo2 < SPO2_MIN_OUT;
-  }
-  bool hrOut = hrHigh || hrLow;
-
-  if (hrOut && !spo2Low) {
-    line1 = hrHigh ? "Battito alto:" : "Battito basso:";
+  if (hrAlarm && !spo2LowAlarmActive) {
+    line1 = hrHighAlarmActive ? "Battito alto:" : "Battito basso:";
     line2 = String(bpm) + " bpm";
-  } else if (spo2Low && !hrOut) {
+  } else if (spo2LowAlarmActive && !hrAlarm) {
     line1 = "SpO2 bassa:";
     line2 = String(spo2) + " %";
   } else {
-    // Fuori entrambi, o appena rientrati nel giro prima che l'allarme cessi
     line1 = String("Battito: ") + bpm + " bpm";
     line2 = String("SpO2: ") + spo2 + " %";
   }
 }
 
+// Valore di un parametro per LCD e monitor seriale: "--" finche' la sua
+// catena non e' agganciata.
+String vitalText(bool ready, int value) {
+  return ready ? String(value) : String("--");
+}
+
 // Battito e saturazione su una riga: BPM a sinistra, SpO2 allineata a destra.
 // Solo con battito a tre cifre e SpO2 al 100% la riga supera i 16 caratteri:
-// printLcdLine taglia allora il simbolo "%".
+// printLcdLine taglia allora il simbolo "%". In z3 puo' mancare uno dei due
+// (vedi isOutsideEntryThresholds), e al suo posto compare "--".
 String buildVitalsText() {
-  String spo2Text = String("SpO2:") + spo2 + "%";
-  String line = String("BPM:") + bpm + " ";
+  String spo2Text = String("SpO2:") + (spo2Ready ? String(spo2) + "%" : String("--"));
+  String line = String("BPM:") + vitalText(hrReady, bpm) + " ";
   while (line.length() + spo2Text.length() < LCD_COLUMNS) line += ' ';
   return line + spo2Text;
 }
@@ -1763,7 +1945,8 @@ void buildAlarmLines(int cause, String& line1, String& line2) {
   }
 }
 
-// Accende o spegne il motore secondo il ritmo della causa a schermo. Viene
+// Accende o spegne il motore secondo il ritmo della causa piu' grave attiva
+// (getMostSevereCause), non di quella a schermo. Viene
 // chiamata a ogni giro del loop, non ogni 250 ms come l'LCD: i battiti brevi
 // hanno bisogno di una tempistica piu' fine di cosi'.
 void updateVibration() {
@@ -1782,6 +1965,7 @@ void updateVibration() {
   } else if (cause == CAUSE_BIOMETRIC) {
     motorOn = true;  // allarme biometrico: vibrazione continua
   }
+  if (millis() - feedbackPulseStartMs < feedbackPulseMs) motorOn = true;  // riscontro di pulseVibration() in corso
   digitalWrite(PIN_VIBRATION, motorOn ? HIGH : LOW);
 }
 

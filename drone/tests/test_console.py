@@ -500,8 +500,8 @@ _CAMPI_PIU_LUNGHI = {
     "detail or 'guasto'": "dati non validi",
     "float(remaining):.0f": "120",
     "_waypoint_label(autopilot_command, apriltag_autopilot)": "10 di 10",
-    "bpm": "250",
-    "spo2": "100",
+    "testo_bpm": "250",
+    "testo_spo2": "100%",
 }
 
 

@@ -129,9 +129,13 @@ def _on_mqtt_message(_client, _userdata, message) -> None:
             LOGGER.warning("Non è stato possibile registrare il messaggio dell'orologio", exc_info=True)
     if evento.get("evento") != WATCH_BIOMETRIC_EVENT:
         return
+    # Un parametro che l'orologio non aveva agganciato arriva null: sotto i 30
+    # bpm, per esempio, la libreria del sensore non calcola la SpO2.
     bpm = evento.get("bpm")
     spo2 = evento.get("spo2")
-    print_event(f"Orologio: {bpm} bpm, SpO2 {spo2}%", prefix="AVVISO", channel="alert")
+    testo_bpm = "--" if bpm is None else bpm
+    testo_spo2 = "--" if spo2 is None else f"{spo2}%"
+    print_event(f"Orologio: {testo_bpm} bpm, SpO2 {testo_spo2}", prefix="AVVISO", channel="alert")
 
 
 def get_watch_status() -> dict:

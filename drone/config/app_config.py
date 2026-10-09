@@ -248,7 +248,7 @@ class SmartwatchThresholdsConfig:
     bpm_min_in: int = 30
     bpm_max_in: int = 120
     spo2_min_in: int = 92
-    bpm_min_out: int = 55
+    bpm_min_out: int = 40
     bpm_max_out: int = 115
     spo2_min_out: int = 94
 
