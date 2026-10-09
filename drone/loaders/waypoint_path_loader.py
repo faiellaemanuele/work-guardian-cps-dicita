@@ -251,7 +251,7 @@ def _parse_home_waypoint(raw):
         yaw_deg = float(raw.get("yaw_deg", 0.0))
     except (TypeError, KeyError, ValueError) as exc:
         raise _PathConfigError(
-            f"'home_waypoint' non è valido ({exc}): servono valori numerici per x, y e z"
+            "'home_waypoint' non è valido: servono valori numerici per x, y e z"
         ) from exc
     if not all(math.isfinite(v) for v in (x, y, z, yaw_deg)):
         raise _PathConfigError(

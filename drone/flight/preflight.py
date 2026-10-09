@@ -38,6 +38,7 @@ from drone.ui.console import (
     log_ready_banner,
     log_title,
     print_step,
+    project_error_text,
     set_alert_sink,
 )
 from drone.ui.setup.effects import fade_screen
@@ -84,6 +85,13 @@ def _model_labels(names) -> list[str]:
 
 def _model_label(name: str) -> str:
     return _model_labels([name])[0]
+
+
+def _con_dettaglio(messaggio: str, exc: BaseException, *, tra_parentesi: bool = False) -> str:
+    dettaglio = project_error_text(exc)
+    if dettaglio is None:
+        return messaggio
+    return f"{messaggio} ({dettaglio})" if tra_parentesi else f"{messaggio}: {dettaglio}"
 
 
 def _scenario_or_config(value, default):
@@ -197,7 +205,10 @@ def _phase_connect(subsystems: Subsystems):
     try:
         subsystems.controller = create_controller()
     except Exception as exc:
-        print_step("!!", f"Non è stato possibile inizializzare il collegamento al drone: {exc}")
+        print_step(
+            "!!",
+            _con_dettaglio("Non è stato possibile inizializzare il collegamento al drone", exc),
+        )
         return None
 
     controller = subsystems.controller
@@ -207,8 +218,12 @@ def _phase_connect(subsystems: Subsystems):
     except Exception as exc:
         print_step(
             "!!",
-            "Il drone non è raggiungibile: verifica che sia acceso e che il computer "
-            f"sia connesso alla sua rete Wi-Fi ({exc})",
+            _con_dettaglio(
+                "Il drone non è raggiungibile: verifica che sia acceso e che il computer "
+                "sia connesso alla sua rete Wi-Fi",
+                exc,
+                tra_parentesi=True,
+            ),
         )
         return None
     print_step("OK", "Il drone Tello EDU è collegato al computer")
@@ -216,7 +231,10 @@ def _phase_connect(subsystems: Subsystems):
     try:
         controller.start_video_stream()
     except Exception as exc:
-        print_step("!!", f"Non è stato possibile avviare il video della camera: {exc}")
+        print_step(
+            "!!",
+            _con_dettaglio("Non è stato possibile avviare il video della camera", exc),
+        )
         return None
     print_step("OK", "Le immagini della camera arrivano correttamente")
     return controller
@@ -235,7 +253,10 @@ def _build_detectors(model_names) -> list:
     try:
         detectors = create_detectors(model_names)
     except Exception as exc:
-        print_step("!!", f"Non è stato possibile caricare i modelli di riconoscimento: {exc}")
+        print_step(
+            "!!",
+            _con_dettaglio("Non è stato possibile caricare i modelli di riconoscimento", exc),
+        )
         return []
     if not detectors:
         print_step("!!", "Nessuno dei modelli di riconoscimento dello scenario è utilizzabile")
@@ -268,7 +289,9 @@ def _phase_localization(subsystems: Subsystems) -> None:
     except Exception as exc:
         print_step(
             "!!",
-            f"Il drone non può calcolare la propria posizione dai marker AprilTag: {exc}",
+            _con_dettaglio(
+                "Il drone non può calcolare la propria posizione dai marker AprilTag", exc
+            ),
         )
     subsystems.pose_estimator = pose_estimator
 
@@ -284,8 +307,12 @@ def _build_pose_filter(subsystems: Subsystems):
     except Exception as exc:
         print_step(
             "!!",
-            "Il filtro di Kalman non è disponibile: la posizione calcolata dai marker "
-            f"non verrà stabilizzata ({exc})",
+            _con_dettaglio(
+                "Il filtro di Kalman non è disponibile: la posizione calcolata dai marker "
+                "non verrà stabilizzata",
+                exc,
+                tra_parentesi=True,
+            ),
         )
         return None
 

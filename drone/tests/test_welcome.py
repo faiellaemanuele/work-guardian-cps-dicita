@@ -62,7 +62,7 @@ def test_the_note_icons_stay_inside_their_square():
 def test_the_welcome_has_no_colors_of_its_own():
     sorgente = pathlib.Path(welcome.__file__).read_text(encoding="utf-8")
     colori = re.findall(r"\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)", sorgente)
-    assert colori == ["(255, 255, 255)", "(255, 255, 255)"]
+    assert colori == ["(255, 255, 255)"]
 
 
 def test_the_command_table_comes_from_the_joystick_module():

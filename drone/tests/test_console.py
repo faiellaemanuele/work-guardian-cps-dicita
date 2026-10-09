@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import io
+import json
 import logging
 import os
 import sys
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import drone.ui.console as co
 from drone.config import APP_CONFIG, BASE_DIR
+from drone.geometry.positions import normalize_position_world
 from drone.ui import fonts
 from drone.ui.video import panels
 from drone.ui.console import (
@@ -19,6 +21,7 @@ from drone.ui.console import (
     log_console_block,
     log_waypoint_reached,
     print_step,
+    project_error_text,
     reset_mission_state,
     set_alert_sink,
 )
@@ -594,6 +597,36 @@ def test_no_unused_field_width_is_declared():
     campi_usati: set = set()
     _messaggi_degli_eventi(campi_usati)
     assert set(_CAMPI_PIU_LUNGHI) == campi_usati
+
+
+def _raised(fn) -> Exception:
+    try:
+        fn()
+    except Exception as exc:
+        return exc
+    raise AssertionError("doveva sollevare un errore")
+
+
+def test_a_project_error_keeps_its_italian_text():
+    exc = _raised(lambda: normalize_position_world([1.0, 2.0]))
+    assert project_error_text(exc).startswith(
+        "position_world deve contenere esattamente 3 coordinate"
+    )
+
+
+def test_an_error_raised_by_a_library_is_hidden():
+    exc = _raised(lambda: json.loads("{"))
+    assert project_error_text(exc) is None
+
+
+def test_a_python_error_inside_project_code_is_hidden():
+    exc = _raised(lambda: normalize_position_world(["a", 1.0, 2.0]))
+    assert isinstance(exc, ValueError)
+    assert project_error_text(exc) is None
+
+
+def test_an_error_never_raised_has_no_text():
+    assert project_error_text(RuntimeError("mai sollevato")) is None
 
 
 def _run_all() -> int:

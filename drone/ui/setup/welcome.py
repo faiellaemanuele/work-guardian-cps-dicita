@@ -494,7 +494,7 @@ def _geometry(width, height, exit_rect, start_rect):
     sinistra_x = exit_rect.x * SS
     destra_x = start_rect.right * SS
     linea = footer_rule_y(exit_rect.y, supersample=SS, unit=SS * k)
-    banner_top = _scale(30)
+    banner_top = _scale(20)
     source = _banner_source()
     banner_height = _scale(190)
     if source is not None:
@@ -508,7 +508,7 @@ def _geometry(width, height, exit_rect, start_rect):
     return {
         "W": W,
         "banner": (sinistra_x, banner_top, destra_x, banner_bottom),
-        "top": banner_bottom + _scale(22),
+        "top": banner_bottom + _scale(12),
         "bottom": linea - int(round(24 * k)) * SS,
         "rule": linea,
         "x0": sinistra_x,

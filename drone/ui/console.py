@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dis
 import logging
 import shutil
 import time
@@ -194,6 +195,24 @@ _SETUP_LOGGER = logging.getLogger("drone.setup")
 def print_step(outcome: str, message: str) -> None:
     level = logging.WARNING if outcome == "!!" else logging.INFO
     _SETUP_LOGGER.log(level, message, extra={"setup_label": outcome})
+
+
+def project_error_text(exc: BaseException) -> Optional[str]:
+    # Solo i messaggi scritti con un raise nel pacchetto drone: quelli delle
+    # librerie e di Python sono in inglese e troppo tecnici per il pilota.
+    tb = exc.__traceback__
+    if tb is None:
+        return None
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    if not tb.tb_frame.f_globals.get("__name__", "").startswith("drone."):
+        return None
+    raised_by_project = any(
+        ins.offset == tb.tb_lasti and ins.opname == "RAISE_VARARGS"
+        for ins in dis.get_instructions(tb.tb_frame.f_code)
+    )
+    text = str(exc).strip()
+    return text if raised_by_project and text else None
 
 
 def log_console_block(text: str) -> None:

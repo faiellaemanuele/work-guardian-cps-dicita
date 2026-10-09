@@ -10,7 +10,7 @@ from drone.hardware.tello_controller import RealTelloController
 from drone.perception.object_detector import ObjectDetector
 from drone.perception.pose_estimator import CameraPoseEstimator
 from drone.perception.pose_filter import PositionKalmanFilter
-from drone.ui.console import print_event
+from drone.ui.console import print_event, project_error_text
 
 
 def create_controller() -> RealTelloController:
@@ -58,7 +58,9 @@ def create_detectors(selected_names: Optional[list[str]] = None) -> list[dict]:
                 }
             )
         except Exception as exc:
-            load_errors.append(f"{model_cfg.name} ({model_cfg.path}): {exc}")
+            errore = f"{model_cfg.name} ({model_cfg.path})"
+            dettaglio = project_error_text(exc)
+            load_errors.append(f"{errore}: {dettaglio}" if dettaglio else errore)
 
     if not detectors and load_errors:
         raise RuntimeError(
@@ -132,9 +134,11 @@ def create_apriltag_autopilot(
 
         return AprilTagAutopilot(autopilot_cfg)
     except (ValueError, TypeError) as exc:
+        dettaglio = project_error_text(exc)
+        motivo = f" ({dettaglio})" if dettaglio else ""
         print_event(
             "Non è stato possibile creare l'autopilota perché la configurazione del "
-            f"percorso non è valida ({exc}): il volo autonomo non è disponibile e si "
+            f"percorso non è valida{motivo}: il volo autonomo non è disponibile e si "
             "prosegue in manuale",
             prefix="ERRORE",
         )
