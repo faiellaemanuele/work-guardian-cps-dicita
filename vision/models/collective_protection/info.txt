@@ -1,0 +1,49 @@
+collective_protection
+
+Il modello rileva le reti di sicurezza utilizzate come protezioni collettive
+all'interno del cantiere. È addestrato su una sola classe, Safety_Net.
+
+Durante le soste di supervisione, le rilevazioni prodotte da questo modello
+vengono utilizzate per verificare la presenza della rete di sicurezza nelle
+aree monitorate. Il sistema di volo utilizza i pesi contenuti in
+weights/best.pt.
+
+Addestramento
+
+Il modello è stato addestrato con Ultralytics 8.4.30, Python 3.12.5 e
+PyTorch 2.11.0+cu130 su GPU NVIDIA GeForce RTX 4050 Laptop, partendo dai pesi
+preaddestrati yolo26s.pt e dal dataset
+verWhiteNetsFull_Lab_Patch_Again_Tables.
+
+Configurazione principale:
+
+    model = YOLO('yolo26s.pt')
+    model.train(
+        data='vision/training/trainer/datasets/verWhiteNetsFull_Lab_Patch_Again_Tables/data.yaml',
+        name='collective_protection',
+        project='vision/models',
+        epochs=50,
+        patience=20,
+        imgsz=640,
+        batch=16,
+        device=0,
+        plots=False,
+        close_mosaic=0,
+    )
+
+L'addestramento ha completato tutte le 50 epoche previste senza attivare
+early stopping. Il checkpoint best.pt corrisponde all'epoca 50, che ha ottenuto
+il miglior valore di mAP50-95 registrato durante l'addestramento.
+
+Il modello risultante è composto da 122 livelli, 9.465.567 parametri e richiede
+20,5 GFLOPs.
+
+Validazione di best.pt
+
+    classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte           8         6        0,992      1,000   0,995      0,869
+
+Tempi medi per immagine:
+- preparazione: 2,4 ms
+- inferenza: 44,0 ms
+- post-elaborazione: 1,5 ms

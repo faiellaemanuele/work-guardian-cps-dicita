@@ -1,0 +1,254 @@
+drone
+
+Questa cartella contiene l'applicazione che gestisce il drone DJI Tello e
+coordina il ciclo operativo di Work Guardian. Il software integra controllo
+manuale e autonomo, percezione visiva, localizzazione tramite AprilTag,
+monitoraggio della sicurezza, comunicazione con lo smartwatch, dashboard e
+registrazione dei dati di missione.
+
+Il punto di ingresso dell'applicazione è:
+
+    python drone/main.py
+
+Struttura generale
+
+drone/
+├── info.txt
+├── main.py
+├── config/
+├── control/
+├── data/
+├── flight/
+├── geometry/
+├── hardware/
+├── loaders/
+├── perception/
+├── surveillance/
+├── ui/
+├── scripts/
+├── waypoint_paths/
+├── maps/
+├── flight_sessions/
+└── tests/
+
+1. main.py
+
+È il punto di ingresso dell'applicazione. Prepara l'ambiente Python e avvia il
+ciclo principale definito in flight/flight_loop.py.
+
+2. config
+
+Raccoglie la configurazione condivisa dal sistema.
+
+- app_config.py
+  Definisce i parametri dell'applicazione, del joystick, della camera, degli
+  AprilTag, del filtro di posa, dell'autopilota, dello smartwatch e dei servizi
+  collegati.
+
+- logging_setup.py
+  Configura logging e console.
+
+- measurements.py
+  Contiene unità di misura ed etichette usate nei report e nell'interfaccia.
+
+3. control
+
+Contiene la logica di controllo del drone.
+
+- autopilot.py
+  Implementa la navigazione autonoma a waypoint utilizzando la posa stimata
+  tramite AprilTag.
+
+- pilot_commands.py
+  Gestisce i comandi del joystick, il controllo manuale, l'attivazione della
+  detection e il passaggio alla modalità autonoma.
+
+- safety_rules.py
+  Definisce le regole runtime relative a batteria e coerenza dello stato di
+  volo.
+
+4. hardware
+
+Fornisce le interfacce con i dispositivi fisici.
+
+- joystick.py
+  Gestisce connessione, eventi, assi e pulsanti del controller.
+
+- tello_controller.py
+  Incapsula il collegamento con DJI Tello, i comandi RC, la telemetria e lo
+  streaming video.
+
+5. loaders
+
+Carica e valida le risorse configurabili della missione.
+
+- waypoint_path_loader.py
+  Legge i percorsi a waypoint definiti nei file JSON.
+
+- yolo_models_loader.py
+  Legge il catalogo dei modelli disponibile nella componente vision.
+
+6. perception
+
+Contiene la pipeline di percezione visiva.
+
+- object_detector.py
+  Esegue l'inferenza dei modelli YOLO.
+
+- pose_estimator.py
+  Stima la posa della camera e del drone nel riferimento mondo usando gli
+  AprilTag osservati.
+
+- pose_filter.py
+  Filtra posizione e orientamento mediante un filtro di Kalman.
+
+- vision_loop.py
+  Coordina acquisizione video, detection, localizzazione, dashboard e
+  comunicazione MQTT con lo smartwatch.
+
+7. surveillance
+
+Implementa i controlli di sicurezza effettuati durante la missione.
+
+- alarm_latch.py
+  Stabilizza gli allarmi nel tempo per evitare attivazioni dovute a singole
+  detection isolate.
+
+- dpi_monitor.py
+  Verifica la presenza o l'assenza dei dispositivi di protezione individuale.
+
+- person_monitor.py
+  Gestisce le segnalazioni relative alle persone rilevate.
+
+- safety_net_monitor.py
+  Valuta le protezioni collettive durante le soste di supervisione previste
+  dal percorso.
+
+8. flight
+
+Coordina le diverse fasi dell'esecuzione.
+
+- preflight.py
+  Inizializza i sottosistemi, guida la selezione della missione e prepara il
+  sistema al volo.
+
+- flight_loop.py
+  Contiene il ciclo operativo principale.
+
+- steps.py
+  Gestisce i passi runtime relativi ad autonomia e monitoraggio della
+  sicurezza.
+
+- guards.py
+  Applica le protezioni di sicurezza durante il volo.
+
+- subsystem_builders.py
+  Costruisce controller, detector, stima posa, filtro, logger e autopilota.
+
+- postflight.py
+  Chiude le risorse ed esporta i dati raccolti.
+
+9. data
+
+Gestisce la registrazione e l'esportazione dei dati.
+
+Comprende:
+
+- logging dei dati di volo;
+- logging della telemetria biometrica;
+- statistiche di sessione;
+- report testuali;
+- report Excel;
+- formattazione e tabelle condivise.
+
+I dati di volo permettono di analizzare sia il comportamento dell'autopilota,
+sia il confronto tra posa visiva grezza e posa filtrata. I dati biometrici
+provengono invece dallo smartwatch tramite MQTT.
+
+10. geometry
+
+Contiene utility geometriche condivise per la gestione di angoli e posizioni
+nel riferimento mondo.
+
+11. ui
+
+Contiene l'interfaccia utente.
+
+- setup/
+  Schermata iniziale, selezione del percorso ed effetti grafici usati prima del
+  volo.
+
+- video/
+  Dashboard runtime, overlay sul video, pannelli laterali e mappa della
+  missione.
+
+- plots/
+  Generazione dei grafici esportati al termine delle sessioni.
+
+- assets/
+  Risorse grafiche utilizzate dall'interfaccia.
+
+Gli altri moduli della cartella definiscono aspetto, font, console e primitive
+grafiche comuni.
+
+12. waypoint_paths
+
+Contiene i file JSON che definiscono i percorsi di missione. Ogni percorso può
+specificare waypoint, soste di supervisione e modelli di visione necessari.
+
+13. maps
+
+Contiene le rappresentazioni grafiche dei percorsi e della disposizione degli
+AprilTag. Le mappe possono essere rigenerate tramite scripts/generate_maps.py.
+
+14. scripts
+
+Contiene strumenti di servizio eseguiti separatamente dall'applicazione
+principale:
+
+- camera_calibration.py
+  Calibrazione della camera;
+
+- generate_maps.py
+  Generazione delle mappe di missione;
+
+- joystick_diagnostics.py
+  Diagnostica della mappatura del joystick.
+
+15. flight_sessions
+
+Contiene le sessioni di volo esportate dall'applicazione. Una sessione può
+includere file Excel e grafici relativi alla localizzazione, al filtro di
+Kalman e all'autopilota.
+
+Questa cartella contiene output generati durante l'esecuzione e non codice
+sorgente.
+
+16. tests
+
+Contiene i test automatici dei principali componenti del package drone,
+inclusi controllo, percezione, monitor di sicurezza, logging, report e
+interfaccia.
+
+Flusso operativo
+
+Il flusso principale dell'applicazione può essere riassunto come segue:
+
+1. main.py avvia l'applicazione;
+2. preflight inizializza interfaccia, joystick, Tello e sottosistemi;
+3. l'utente seleziona il percorso di missione;
+4. vengono caricati i modelli YOLO richiesti e configurata la localizzazione;
+5. durante il volo vision_loop acquisisce e analizza il video;
+6. la posa ottenuta dagli AprilTag viene eventualmente filtrata dal Kalman;
+7. in modalità autonoma l'autopilota calcola i comandi per raggiungere i
+   waypoint;
+8. durante le soste previste vengono eseguiti i controlli di sicurezza;
+9. gli allarmi vengono mostrati nella dashboard e, quando previsto, inviati
+   allo smartwatch tramite MQTT;
+10. i dati di volo e biometrici vengono registrati;
+11. al termine della sessione postflight chiude le risorse e genera report e
+    grafici.
+
+La cartella drone rappresenta quindi il livello di integrazione principale del
+progetto: collega hardware, visione artificiale, controllo, sicurezza,
+comunicazione, interfaccia e analisi dei dati in un unico ciclo operativo.

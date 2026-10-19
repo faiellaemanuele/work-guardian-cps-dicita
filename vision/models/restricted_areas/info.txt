@@ -1,0 +1,48 @@
+restricted_areas
+
+Il modello rileva i rettangoli rossi utilizzati per delimitare a pavimento le
+aree interdette. È addestrato su una sola classe, Red Rectangle.
+
+Durante le soste di supervisione, le rilevazioni prodotte da questo modello
+vengono combinate con quelle delle persone fornite dal modello
+person_fall per verificare l'eventuale ingresso in un'area interdetta.
+Il sistema di volo utilizza i pesi contenuti in weights/best.pt.
+
+Addestramento
+
+Il modello è stato addestrato con Ultralytics 8.4.30, Python 3.12.5 e
+PyTorch 2.11.0+cu130 su GPU NVIDIA GeForce RTX 4050 Laptop, partendo dai pesi
+preaddestrati yolo26s.pt e dal dataset verRedRect_Lab.
+
+Configurazione principale:
+
+    model = YOLO('yolo26s.pt')
+    model.train(
+        data='vision/training/trainer/datasets/verRedRect_Lab/data.yaml',
+        name='restricted_areas',
+        project='vision/models',
+        epochs=30,
+        patience=10,
+        imgsz=640,
+        batch=16,
+        device=0,
+        plots=False,
+        close_mosaic=0,
+    )
+
+L'addestramento si è arrestato dopo 18 epoche per early stopping, poiché le
+metriche di validazione non erano migliorate per 10 epoche consecutive. Il
+checkpoint best.pt corrisponde all'epoca 8.
+
+Il modello risultante è composto da 122 livelli, 9.465.567 parametri e richiede
+20,5 GFLOPs.
+
+Validazione di best.pt
+
+    classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte           5         5        0,978      1,000   0,995      0,947
+
+Tempi medi per immagine:
+- preparazione: 0,3 ms
+- inferenza: 8,2 ms
+- post-elaborazione: 0,2 ms

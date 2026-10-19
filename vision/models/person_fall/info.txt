@@ -1,0 +1,52 @@
+person_fall
+
+Il modello rileva persone e situazioni di caduta attraverso due classi: Person
+e Fall.
+
+Durante le soste di supervisione, le rilevazioni della classe Person vengono
+utilizzate insieme a quelle del modello restricted_areas per verificare
+l'eventuale ingresso di una persona in un'area vietata. Le rilevazioni della
+classe Fall vengono invece utilizzate per generare gli allarmi relativi a
+possibili cadute. Il sistema di volo utilizza i pesi contenuti in
+weights/best.pt.
+
+Addestramento
+
+Il modello è stato addestrato con Ultralytics 8.4.30, Python 3.12.5 e
+PyTorch 2.11.0+cu130 su GPU NVIDIA GeForce RTX 4050 Laptop, partendo dai pesi
+preaddestrati yolo26s.pt e dal dataset ver_DcEFJ1N.
+
+Configurazione principale:
+
+    model = YOLO('yolo26s.pt')
+    model.train(
+        data='vision/training/trainer/datasets/ver_DcEFJ1N/data.yaml',
+        name='person_fall',
+        project='vision/models',
+        epochs=80,
+        patience=20,
+        imgsz=640,
+        batch=16,
+        device=0,
+        plots=False,
+        close_mosaic=0,
+    )
+
+L'addestramento ha completato tutte le 80 epoche previste senza attivare
+early stopping. Il checkpoint best.pt corrisponde all'epoca 80, che ha ottenuto
+il miglior valore complessivo delle metriche di validazione.
+
+Il modello risultante è composto da 122 livelli, 9.465.954 parametri e richiede
+20,5 GFLOPs.
+
+Validazione di best.pt
+
+    classe   immagini   istanze   precisione   richiamo   mAP50   mAP50-95
+    tutte        1036      3356        0,882      0,835   0,897      0,592
+    Fall          780       899        0,893      0,852   0,913      0,633
+    Person        711      2457        0,871      0,818   0,881      0,551
+
+Tempi medi per immagine:
+- preparazione: 0,2 ms
+- inferenza: 4,6 ms
+- post-elaborazione: 0,2 ms

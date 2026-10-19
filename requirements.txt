@@ -1,0 +1,37 @@
+# Dipendenze Python del progetto.
+# Ambiente di riferimento: Python 3.12.10
+# Le dipendenze dirette sono bloccate a versioni esatte per favorire la riproducibilita.
+#
+# Installazione:
+#
+#     pip install -r requirements.txt
+#
+# Eseguire il comando dalla cartella che contiene questo file.
+
+# Drone e input
+djitellopy==2.5.0
+pygame-ce==2.5.8
+
+# Visione artificiale e image processing
+opencv-contrib-python==4.14.0.94
+pyapriltags==3.4.3.1
+numpy==2.5.4
+Pillow==13.0.0
+ultralytics==8.4.182
+torch==2.14.1
+torchvision==0.29.1
+supervision==0.31.0
+
+# Configurazione e gestione dati
+PyYAML==6.0.3
+pandas==3.0.6
+openpyxl==3.1.5
+
+# Visualizzazione
+matplotlib==3.11.2
+
+# Comunicazione MQTT
+paho-mqtt==2.1.0
+
+# Test
+pytest==9.1.1

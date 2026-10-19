@@ -1,0 +1,55 @@
+Per far funzionare i comandi bisogna entrare nella cartella del progetto
+(work-guardian-cps): basta cliccare con il tasto destro sulla cartella e
+scegliere "Apri nel terminale".
+
+
+MISSIONE
+--------
+
+Avvio:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -r -m "{\"source\":\"drone\",\"tipo\":\"AVVIO_MISSIONE\"}"
+
+Fine:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -r -m "{\"source\":\"drone\",\"tipo\":\"FINE_MISSIONE\"}"
+
+
+ALLARMI DPI
+-----------
+
+Elmetto:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"DPI_MANCANTE\",\"dettaglio\":\"Elmetto\"}"
+
+Occhiali:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"DPI_MANCANTE\",\"dettaglio\":\"Occhiali\"}"
+
+Gilet:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"DPI_MANCANTE\",\"dettaglio\":\"Gilet\"}"
+
+Scarpe:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"DPI_MANCANTE\",\"dettaglio\":\"Scarpe\"}"
+
+Tutti insieme:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"DPI_MANCANTE\",\"dettaglio\":\"Elmetto, Occhiali, Gilet, Scarpe\"}"
+
+DPI di nuovo presenti:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"DPI_OK\"}"
+
+
+AREA VIETATA
+------------
+
+Ingresso:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"AREA_VIETATA\"}"
+
+Area di nuovo libera:
+
+& "C:\Program Files\Mosquitto\mosquitto_pub.exe" --% -h 127.0.0.1 -t cantiere/allarmi -q 1 -m "{\"source\":\"drone\",\"tipo\":\"AREA_OK\"}"

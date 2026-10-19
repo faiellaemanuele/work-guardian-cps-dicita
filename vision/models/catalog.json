@@ -1,0 +1,50 @@
+{
+  "roles": {
+    "safety_net": "collective_protection",
+    "person_fall": "person_fall",
+    "restricted_area": "restricted_areas",
+    "dpi": "personal_protection"
+  },
+  "models": [
+    {
+      "weights": "personal_protection/weights/best.pt",
+      "color": [64, 64, 255],
+      "label": "Protezioni individuali",
+      "classes": {
+        "Helmet": "Elmetto",
+        "Vest": "Gilet",
+        "Goggles": "Occhiali",
+        "Safety_shoes": "Scarpe",
+        "Without_Helmet": "Elmetto mancante",
+        "Without_Vest": "Gilet mancante",
+        "Without_Goggles": "Occhiali mancanti",
+        "Without_Safety_shoes": "Scarpe mancanti"
+      }
+    },
+    {
+      "weights": "collective_protection/weights/best.pt",
+      "color": [70, 224, 90],
+      "label": "Protezioni collettive",
+      "classes": {
+        "Safety_Net": "Rete di sicurezza"
+      }
+    },
+    {
+      "weights": "person_fall/weights/best.pt",
+      "color": [255, 170, 56],
+      "label": "Caduta delle persone",
+      "classes": {
+        "Person": "Persona",
+        "Fall": "Caduta"
+      }
+    },
+    {
+      "weights": "restricted_areas/weights/best.pt",
+      "color": [0, 196, 255],
+      "label": "Aree interdette",
+      "classes": {
+        "Red Rectangle": "Area interdetta"
+      }
+    }
+  ]
+}

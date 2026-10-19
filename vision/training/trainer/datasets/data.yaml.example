@@ -1,0 +1,13 @@
+train: 
+  - ./dataset_esempio_1/train
+  - ./dataset_esempio_2/train
+val: 
+  - ./dataset_esempio_1/valid
+  - ./dataset_esempio_2/valid
+
+test:
+  - ./dataset_esempio_1/test
+  - ./dataset_esempio_2/test
+
+nc: 3
+names: ['classe 0', 'classe 1', 'classe 2']

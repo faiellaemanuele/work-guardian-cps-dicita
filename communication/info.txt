@@ -1,0 +1,98 @@
+communication
+
+Questa cartella raccoglie i file necessari per configurare e documentare la comunicazione di rete del progetto.
+
+L'architettura utilizza due collegamenti distinti:
+
+- il PC comunica con il drone Tello tramite la rete Wi-Fi generata dal drone;
+- lo smartwatch comunica con il PC attraverso un router locale e il protocollo MQTT.
+
+Il PC svolge quindi il ruolo di nodo centrale: è collegato al Tello tramite Wi-Fi e al router tramite Ethernet. Sul PC viene eseguito il broker MQTT Mosquitto.
+
+Struttura della cartella
+
+communication/
+├── info.txt
+├── docs/
+│   └── communication_setup.md
+└── broker/
+    └── mqtt_broker.conf
+
+1. docs
+
+La cartella docs contiene la documentazione relativa alla configurazione e all'avvio della comunicazione.
+
+communication_setup.md
+
+Descrive la procedura completa per predisporre e avviare l'infrastruttura di rete del sistema.
+
+La guida comprende:
+
+- configurazione del router;
+- assegnazione dell'indirizzo Ethernet fisso 192.168.1.2 al PC;
+- configurazione del firewall di Windows;
+- installazione e avvio di Mosquitto;
+- configurazione della rete dello smartwatch;
+- collegamento del PC alla rete Wi-Fi del Tello;
+- avvio del programma del drone;
+- diagnostica dei principali problemi di connessione.
+
+Il programma del drone raggiunge il broker MQTT localmente tramite:
+
+    127.0.0.1:1883
+
+Lo smartwatch raggiunge invece il broker attraverso l'interfaccia Ethernet del PC:
+
+    192.168.1.2:1883
+
+2. broker
+
+La cartella broker contiene la configurazione del broker MQTT utilizzato dal progetto.
+
+mqtt_broker.conf
+
+Definisce i parametri con cui Mosquitto viene avviato.
+
+Il broker ascolta sulla porta MQTT standard 1883 su tutte le interfacce IPv4 del PC:
+
+    listener 1883 0.0.0.0
+
+In questo modo può ricevere sia le connessioni locali del programma del drone, sia quelle provenienti dallo smartwatch attraverso la rete del router.
+
+L'accesso anonimo è abilitato:
+
+    allow_anonymous true
+
+Questa configurazione è pensata per l'utilizzo all'interno della rete locale controllata del progetto.
+
+Flusso di comunicazione
+
+Il flusso principale può essere rappresentato come:
+
+    Smartwatch
+        |
+       Wi-Fi
+        |
+      Router
+        |
+     Ethernet
+        |
+        PC
+     Mosquitto
+        |
+    applicazione
+       drone
+        |
+       Wi-Fi
+        |
+      Tello
+
+Mosquitto gestisce la comunicazione MQTT tra lo smartwatch e l'applicazione eseguita sul PC, mentre il collegamento con il Tello utilizza direttamente la rete Wi-Fi del drone.
+
+Per la procedura completa di configurazione e avvio fare riferimento a:
+
+    communication/docs/communication_setup.md
+
+La configurazione del broker utilizzata dal progetto si trova invece in:
+
+    communication/broker/mqtt_broker.conf
