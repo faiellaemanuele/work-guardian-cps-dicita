@@ -25,6 +25,62 @@ Work-Guardian integra le seguenti funzionalità:
 - comunicazione bidirezionale tra smartwatch e stazione centrale mediante **MQTT**;
 - visualizzazione e gestione degli allarmi in tempo reale.
 
+## Work-Guardian in azione
+
+L'interfaccia di supervisione riunisce in tempo reale le informazioni provenienti dal drone, dal sistema di localizzazione, dai modelli di computer vision e dal dispositivo wearable.
+
+<p align="center">
+  <img src="assets/gallery/monitoring_dashboard.png"
+       alt="Dashboard di supervisione di Work-Guardian"
+       width="95%">
+</p>
+
+<p align="center">
+  <em>Supervisione di una missione: computer vision, localizzazione, stato del drone, dati biometrici e gestione degli alert.</em>
+</p>
+
+### Interfaccia di controllo
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/gallery/application_overview.png"
+           alt="Schermata introduttiva e comandi del controller"
+           width="100%"><br>
+      <b>Presentazione e controllo del sistema</b><br>
+      Interfaccia introduttiva e principali comandi del controller.
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/gallery/scenario_selection.png"
+           alt="Selezione dello scenario operativo"
+           width="100%"><br>
+      <b>Selezione dello scenario</b><br>
+      Configurazione della missione e dei task di supervisione.
+    </td>
+  </tr>
+</table>
+
+### Componenti fisici
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/gallery/drone.png"
+           alt="DJI Tello EDU"
+           width="85%"><br>
+      <b>DJI Tello EDU</b><br>
+      Piattaforma aerea utilizzata per la supervisione autonoma dell'area di lavoro.
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/gallery/wearable.jpg"
+           alt="Dispositivo wearable biometrico Work-Guardian"
+           width="85%"><br>
+      <b>Wearable biometrico</b><br>
+      Dispositivo indossabile per il monitoraggio dei parametri fisiologici e la ricezione degli allarmi.
+    </td>
+  </tr>
+</table>
+
 ## Architettura del sistema
 
 ```mermaid
@@ -106,6 +162,8 @@ Nel complesso, il sistema integra **percezione ambientale, monitoraggio biometri
 ```text
 work-guardian-cps-dicita/
 ├── assets/                 # Risorse utilizzate dalla documentazione
+│   ├── banner_readme.png
+│   └── gallery/            # Immagini del sistema e della Maker Faire
 ├── communication/          # Configurazione della rete e del broker MQTT
 ├── drone/                  # Applicazione principale e gestione del drone
 ├── vision/                 # Computer vision, modelli YOLO, training e test
@@ -191,6 +249,24 @@ python drone/main.py
 Il **DJI Tello EDU** deve essere collegato alla stazione centrale tramite la propria rete Wi-Fi. Il **controller PS4** è necessario per le funzionalità di controllo previste dall'applicazione.
 
 Le funzionalità biometriche e la ricezione delle notifiche sullo smartwatch richiedono inoltre che il **broker MQTT** e il **sistema wearable** siano attivi e correttamente configurati.
+
+## Maker Faire Rome 2026
+
+**Work-Guardian** è stato presentato a **Maker Faire Rome 2026**, tenutasi dal **23 al 25 ottobre 2026** presso il **Gazometro Ostiense di Roma**.
+
+Il progetto è stato esposto nello spazio dell'**Università degli Studi Roma Tre**, permettendo di mostrare dal vivo l'integrazione tra drone, computer vision, monitoraggio biometrico, comunicazione e supervisione centralizzata.
+
+<p align="center">
+  <img src="assets/gallery/maker_faire_stand.jpg"
+       alt="Stand di Work-Guardian a Maker Faire Rome 2026"
+       width="90%">
+</p>
+
+<p align="center">
+  <em>Stand di Work-Guardian a Maker Faire Rome 2026.</em>
+</p>
+
+🔗 [Work-Guardian at Maker Faire Rome 2026 – LinkedIn](https://lnkd.in/p/duHUYVSY)
 
 ## Autori
 
